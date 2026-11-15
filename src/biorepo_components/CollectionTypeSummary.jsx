@@ -29,6 +29,11 @@ const useStyles = makeStyles()((theme) => ({
     padding: theme.spacing(4),
     width: '100%',
     boxSizing: 'border-box',
+    minWidth: 0,
+    maxWidth: '100%',
+    containerType: 'inline-size',
+    containerName: 'sample-summary',
+    [theme.breakpoints.down('sm')]: { padding: theme.spacing(2) },
   },
 
   header: {
@@ -41,6 +46,8 @@ const useStyles = makeStyles()((theme) => ({
 
   titleRow: {
     display: 'flex',
+    minWidth: 0,
+    '& .MuiIconButton-root': { flexShrink: 0 },
     alignItems: 'center',
     gap: theme.spacing(1),
     marginBottom: theme.spacing(1),
@@ -48,6 +55,8 @@ const useStyles = makeStyles()((theme) => ({
 
   title: {
     fontWeight: 700,
+    minWidth: 0,
+    overflowWrap: 'anywhere',
   },
 
   subtitle: {
@@ -60,7 +69,8 @@ const useStyles = makeStyles()((theme) => ({
     cursor: 'pointer',
     color: theme.palette.primary.main,
     fontWeight: 600,
-    whiteSpace: 'nowrap',
+    whiteSpace: 'normal',
+    maxWidth: '100%',
     fontSize: '1rem',
   },
 
@@ -78,10 +88,12 @@ const useStyles = makeStyles()((theme) => ({
       minHeight: 'unset',
     },
     '& .MuiAccordionSummary-content': {
-      margin: `${theme.spacing(2)}px 0`,
+      margin: theme.spacing(2, 0),
+      minWidth: 0,
     },
     '& .MuiAccordionSummary-content.Mui-expanded': {
-      margin: `${theme.spacing(2)}px 0`,
+      margin: theme.spacing(2, 0),
+      minWidth: 0,
     },
   },
 
@@ -91,26 +103,32 @@ const useStyles = makeStyles()((theme) => ({
     paddingLeft: theme.spacing(5),
     paddingRight: 0,
     paddingBottom: theme.spacing(2),
+    '@container sample-summary (max-width: 620px)': { paddingLeft: 0 },
   },
 
   familyRow: {
     width: '100%',
+    minWidth: 0,
   },
 
   familyTopRow: {
     display: 'grid',
-    gridTemplateColumns: '1fr auto',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
     gap: theme.spacing(2),
     alignItems: 'center',
     marginBottom: theme.spacing(1),
+    '@container sample-summary (max-width: 620px)': { gridTemplateColumns: 'minmax(0, 1fr)', gap: theme.spacing(0.5) },
   },
 
   familyLabel: {
     fontWeight: 700,
+    minWidth: 0,
+    overflowWrap: 'anywhere',
   },
 
   totalLabel: {
-    whiteSpace: 'nowrap',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
     fontWeight: 600,
   },
 
@@ -120,16 +138,11 @@ const useStyles = makeStyles()((theme) => ({
     backgroundColor: theme.palette.grey[200],
   },
 
-  subtypeRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr auto',
-    gap: theme.spacing(2),
-    alignItems: 'center',
-    padding: `${theme.spacing(1)}px 0`,
-  },
-
   subtypeLabel: {
     display: 'flex',
+    minWidth: 0,
+    '& > a, & > svg': { flexShrink: 0 },
+    '& .MuiTypography-root': { minWidth: 0, overflowWrap: 'anywhere' },
     alignItems: 'center',
     gap: theme.spacing(1.5),
   },
@@ -149,6 +162,13 @@ const useStyles = makeStyles()((theme) => ({
 
   protocolRow: {
     display: 'flex',
+    flexWrap: 'wrap',
+    minWidth: 0,
+    '& .MuiButton-root': { minWidth: 0, maxWidth: '100%', whiteSpace: 'normal' },
+    '@container sample-summary (max-width: 620px)': {
+      flexDirection: 'column', alignItems: 'stretch',
+      '& .MuiButton-root': { width: '100%' },
+    },
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: theme.spacing(1),
@@ -165,17 +185,22 @@ const useStyles = makeStyles()((theme) => ({
   },
 
   protocolIcon: {
+    flexShrink: 0,
     color: theme.palette.text.secondary,
     fontSize: 22,
   },
 
   protocolDivider: {
     width: 1,
+    flexShrink: 0,
     height: 18,
     backgroundColor: theme.palette.grey[300],
   },
 
   protocolText: {
+    minWidth: 0,
+    overflowWrap: 'anywhere',
+    flex: '1 1 0',
     color: theme.palette.text.secondary,
   },
 
@@ -188,9 +213,15 @@ const useStyles = makeStyles()((theme) => ({
   },
 
   subtypeRow: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    minWidth: 0,
+    gap: theme.spacing(1, 2),
+    '@container sample-summary (max-width: 620px)': {
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      '& > .MuiTypography-root': { textAlign: 'left' },
+    },
     padding: theme.spacing(1, 2),
     borderRadius: 4,
     '&:hover': {
@@ -228,9 +259,9 @@ const useStyles = makeStyles()((theme) => ({
   },
 
   subtypeCount: {
-    minWidth: 180,
+    minWidth: 0,
     textAlign: 'right',
-    flexShrink: 0,
+    overflowWrap: 'anywhere',
   },
 }));
 
@@ -704,6 +735,7 @@ export default function CollectionTypeSummary() {
         <Typography
           variant="body2"
           className={classes.footer}
+          component="div"
         >
           {sampleTypes.length > 3 && (
             <div className={classes.footerButton}>
@@ -727,3 +759,4 @@ export default function CollectionTypeSummary() {
   );
 }
 // #end neon edit
+
