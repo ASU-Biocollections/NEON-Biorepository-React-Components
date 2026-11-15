@@ -10,6 +10,7 @@ import NeonPage from '../lib_components/components/NeonPage/NeonPage';
 import StyleSeeds from './StyleSeeds';
 import BiorepoSearchSidebar from './BiorepoSearchSidebar';
 import BiorepoSidebarContact from './BiorepoSidebarContact';
+import { resolveBreadcrumbLinks } from './breadcrumbLinks';
 
 export default function BiorepoPage() {
   const isSampleCatalog = window.location.pathname
@@ -75,7 +76,7 @@ export default function BiorepoPage() {
         const data = await response.json();
         const pathname = window.location.pathname.slice(config.CLIENT_ROOT.length);
         const breadcrumbData = data[pathname] || [{ name: 'Data & Samples', href: 'https://www.neonscience.org/data-samples' }, { name: 'Sample Portal' }];
-        setBreadcrumbs(breadcrumbData);
+        setBreadcrumbs(resolveBreadcrumbLinks(breadcrumbData, window.location.search, document));
       } catch (error) {
         console.error('Error fetching breadcrumbs:', error);
       }

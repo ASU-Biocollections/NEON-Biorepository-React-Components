@@ -642,9 +642,11 @@ const NeonPage = (inProps) => {
         <HomeIcon title="Home" fontSize="small" style={{ marginBottom: '-4px' }} />
       </Link>
       {breadcrumbs.map(
-        (breadcrumb, idx) => (idx !== breadcrumbs.length - 1
-          ? (<Link key={uniqueId()} href={breadcrumb.href}>{breadcrumb.name}</Link>)
-          : (<Typography key="{idx}" color="textPrimary">{breadcrumb.name}</Typography>)),
+        // #neon edit: parent breadcrumbs without a resolved ID remain plain text.
+        (breadcrumb, idx) => (idx !== breadcrumbs.length - 1 && breadcrumb.href
+          ? (<Link key={`breadcrumb-${idx}`} href={breadcrumb.href}>{breadcrumb.name}</Link>)
+          : (<Typography key={`breadcrumb-${idx}`} color="textPrimary">{breadcrumb.name}</Typography>)),
+        // #end neon edit
       )}
     </Breadcrumbs>
   ));
