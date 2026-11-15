@@ -15,7 +15,8 @@ import { resolveBreadcrumbLinks } from './breadcrumbLinks';
 export default function BiorepoPage() {
   const isSampleCatalog = window.location.pathname
     .endsWith('/collections/misc/browsecollprofiles.php');
-  const isCollectionProfile = window.location.pathname.endsWith('/collections/misc/neoncollprofiles.php');
+  const isReadableSampleType = /\/sample-types\/[A-Za-z0-9][A-Za-z0-9._-]*\/?$/.test(window.location.pathname);
+  const isCollectionProfile = isReadableSampleType || window.location.pathname.endsWith('/collections/misc/neoncollprofiles.php');
   const isRecordSearch = window.location.pathname.endsWith('/neon/search/index.php');
   const isRecordResults = window.location.pathname.endsWith('/collections/list.php');
   const hasSearchSidebar = isRecordSearch || isRecordResults;
@@ -74,9 +75,15 @@ export default function BiorepoPage() {
           throw new Error('Failed to fetch breadcrumbs');
         }
         const data = await response.json();
-        const pathname = window.location.pathname.slice(config.CLIENT_ROOT.length);
+        const pathname = isReadableSampleType ? '/collections/misc/neoncollprofiles.php'
+          : window.location.pathname.slice(config.CLIENT_ROOT.length);
         const breadcrumbData = data[pathname] || [{ name: 'Data & Samples', href: 'https://www.neonscience.org/data-samples' }, { name: 'Sample Portal' }];
-        setBreadcrumbs(resolveBreadcrumbLinks(breadcrumbData, window.location.search, document));
+        const resolved = resolveBreadcrumbLinks(breadcrumbData, window.location.search, document);
+        const breadcrumbBase = new URL(`${config.CLIENT_ROOT}${pathname}`, window.location.origin);
+        setBreadcrumbs(isReadableSampleType ? resolved.map((breadcrumb) => ({
+          ...breadcrumb,
+          href: breadcrumb.href ? new URL(breadcrumb.href, breadcrumbBase).href : undefined,
+        })) : resolved);
       } catch (error) {
         console.error('Error fetching breadcrumbs:', error);
       }
@@ -90,7 +97,7 @@ export default function BiorepoPage() {
         }
         const data = await response.json();
         const { pathname } = window.location;
-        const filename = pathname.split('/').pop();
+        const filename = isReadableSampleType ? 'neoncollprofiles.php' : pathname.split('/').pop();
 
         const sidebarData = data[filename] || data.default;
         setSidebarLinks(sidebarData.links);
@@ -103,7 +110,7 @@ export default function BiorepoPage() {
     // Reveal only after both requests settle, including their error paths.
     Promise.allSettled([fetchBreadcrumbs(), fetchSidebarLinks()])
       .then(() => setLayoutReady(true));
-  }, [config]);
+  }, [config, isReadableSampleType]);
   
   useLayoutEffect(() => {
     if (!layoutReady) return;

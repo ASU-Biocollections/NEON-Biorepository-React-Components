@@ -34,6 +34,12 @@ import CollectionDetails from "./collectionProfile/CollectionDetails";
 import CollectionStatistics from "./collectionProfile/CollectionStatistics";
 import BiorepoSidebarContact from "./BiorepoSidebarContact";
 
+function profileResourceUrl(value, clientRoot) {
+  if (!safeUrl(value) || /^(?:[a-z][a-z0-9+.-]*:|\/\/|[?#])/i.test(value)) return value;
+  const base = new URL(`${clientRoot}/collections/misc/neoncollprofiles.php`, window.location.origin);
+  return new URL(value, base).href;
+}
+
 function Link({ href, children, button = false, external = false }) {
   const url = safeUrl(href);
   if (!url) return <span>{children}</span>;
@@ -481,7 +487,7 @@ function Distribution({ distribution, profileUrl, recordsUrl }) {
             <li key={term}>
               {row.hasChild && (!geo || !distribution.state) ? (
                 <Link
-                  href={`${profileUrl}&${drill}#${geo ? "geographystats" : "taxonomystats"}`}
+                  href={`${profileUrl}${profileUrl.includes('?') ? '&' : '?'}${drill}#${geo ? "geographystats" : "taxonomystats"}`}
                 >
                   {term}
                 </Link>
@@ -515,11 +521,17 @@ const excludedDescriptionTags = [
 ];
 
 // Separate curator-authored photos for the details column without changing stored HTML.
-function splitDescription(html = "") {
+function splitDescription(html = "", clientRoot = "") {
   const document = new DOMParser().parseFromString(html || "", "text/html");
   document
     .querySelectorAll(excludedDescriptionTags.join(","))
     .forEach((node) => node.remove());
+  document.body.querySelectorAll('[href], [src]').forEach((node) => {
+    ['href', 'src'].forEach((attribute) => {
+      const value = node.getAttribute(attribute);
+      if (value && safeUrl(value)) node.setAttribute(attribute, profileResourceUrl(value, clientRoot));
+    });
+  });
   const images = [];
   document.body.querySelectorAll("img").forEach((image) => {
     const src = safeUrl(image.getAttribute("src"));
@@ -589,12 +601,12 @@ export function CollectionProfile({
   language = "en",
 }) {
   const description = useMemo(
-    () => splitDescription(profile.description),
-    [profile.description],
+    () => splitDescription(profile.description, clientRoot),
+    [profile.description, clientRoot],
   );
   const navigationHost = document.getElementById("biorepo-profile-navigation");
   const profileUrl = (id) =>
-    `${clientRoot}/collections/misc/neoncollprofiles.php?collid=${id}`;
+    profile.urls?.[id] || `${clientRoot}/collections/misc/neoncollprofiles.php?collid=${id}`;
   const bulkSampleCollections = profile.bulkSampleCollections || [];
   const relatedSamples = Object.entries(profile.related || {}).sort(
     ([, firstTitle], [, secondTitle]) =>
@@ -604,7 +616,9 @@ export function CollectionProfile({
     typeof resource.title === "string"
       ? resource.title
       : resource.title?.[language] || resource.title?.en || dataProductCode(resource.url) || "Linked resource";
-  const resources = useMemo(() => profile.resources || [], [profile.resources]);
+  const resources = useMemo(() => (profile.resources || []).map((resource) => ({
+    ...resource, url: profileResourceUrl(resource.url, clientRoot),
+  })), [profile.resources, clientRoot]);
   const dataProducts = [...new Map(
     resources
       .filter((resource) => dataProductCode(resource.url) && safeUrl(resource.url))

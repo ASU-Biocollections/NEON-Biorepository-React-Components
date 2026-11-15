@@ -897,7 +897,8 @@ function Catalog() {
             const months = [
               ...new Set(coverage.flatMap((site) => site.availableMonths)),
             ].sort();
-            const details = `${root}/collections/misc/neoncollprofiles.php?collid=${item.id}`;
+            const details = window.NEON_SAMPLE_TYPE_URLS?.[item.id]
+              || `${root}/collections/misc/neoncollprofiles.php?collid=${item.id}`;
             const description = item.shortDescription ?? cardDescription(item.description || '');
             const cardRecords = cardRecordLinks.get(item.id);
             const cardRecordsDisabled = recordLinksPending || !cardRecords.browse;
