@@ -33,6 +33,7 @@ import styles from "./collectionProfile/Profile.module.css";
 import CollectionDetails from "./collectionProfile/CollectionDetails";
 import CollectionStatistics from "./collectionProfile/CollectionStatistics";
 import BiorepoSidebarContact from "./BiorepoSidebarContact";
+import { getPageAnchorOffset } from "../lib_components/components/NeonPage/pageOffsets";
 
 function profileResourceUrl(value, clientRoot) {
   if (!safeUrl(value) || /^(?:[a-z][a-z0-9+.-]*:|\/\/|[?#])/i.test(value)) return value;
@@ -659,8 +660,6 @@ export function CollectionProfile({
       setActiveSection(sectionIds.split(",").includes(hash) ? hash : "about");
     };
     window.addEventListener("hashchange", syncSection);
-    const target = document.getElementById(window.location.hash.slice(1));
-    target?.scrollIntoView?.();
     return () => window.removeEventListener("hashchange", syncSection);
   }, [sectionIds]);
   // Track the section at the reading edge, including layout changes after loading.
@@ -672,9 +671,7 @@ export function CollectionProfile({
     let frame = null;
     const update = () => {
       frame = null;
-      const compact = window.matchMedia("(max-width: 959.95px)").matches;
-      const bar = document.querySelector(".profile-sidebar");
-      const readingEdge = compact ? (bar?.offsetHeight || 64) + 16 : 40;
+      const readingEdge = getPageAnchorOffset();
       let current = targets[0].id;
       targets.forEach((target) => {
         if (target.getBoundingClientRect().top <= readingEdge) current = target.id;

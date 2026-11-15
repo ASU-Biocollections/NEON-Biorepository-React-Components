@@ -3,7 +3,6 @@ import React, {
   useState,
   useEffect,
   useMemo,
-  useCallback,
   useLayoutEffect,
   useReducer,
 } from 'react';
@@ -54,29 +53,10 @@ import { makeStyles } from '../Theme/makeStyles';
 import { resolveProps } from '../../util/defaultProps';
 import { useNetworkAvailability } from '../../hooks/customHooks';
 
+import { observePageOffsets } from './pageOffsets';
 import './styles.css';
 
 const DRUPAL_THEME_CSS = REMOTE_ASSETS.DRUPAL_THEME_CSS.KEY;
-
-// Function to determine if we're effectively scrolled to the bottom of the page. Used to set
-// current sidebar link to the last one automatically when the associated content for the last link
-// can't be scrolled past (i.e. is not taller than the page height less the footer height)
-const isAtMaxScroll = () => {
-  const windowHeight = window.innerHeight
-    || (document.documentElement || document.body).clientHeight;
-  const documentHeight = Math.max(
-    document.body.scrollHeight,
-    document.documentElement.scrollHeight,
-    document.body.offsetHeight,
-    document.documentElement.offsetHeight,
-    document.body.clientHeight,
-    document.documentElement.clientHeight,
-  );
-  const scrollTop = window.pageYOffset
-    || (document.documentElement || document.body.parentNode || document.body).scrollTop;
-  const trackLength = documentHeight - windowHeight;
-  return (scrollTop / trackLength) >= 0.99;
-};
 
 // Google Tag Manager Data Layer
 // Define if not already defined. This must be set in the public/index.html for any apps/pages that
@@ -140,10 +120,11 @@ const useStyles = makeStyles()((theme, { sidebarWidth, sidebarDisableMaxHeight }
     [theme.breakpoints.down('md')]: {
       display: 'inline-block',
       width: '100%',
-      maxHeight: sidebarDisableMaxHeight ? 'unset' : 'calc(100vh - 84px)',
+      maxHeight: 'calc(100dvh - var(--neon-header-offset, 0px) - 24px)',
+      overflowY: 'auto',
       padding: theme.spacing(2.5, 2),
       position: 'sticky',
-      top: '-2px',
+      top: 'var(--neon-header-offset, 0px)',
       boxShadow: '0px 1px 3px rgba(0, 0, 0, 0.25), 0px 1px 1px rgba(0, 0, 0, 0.25)',
       zIndex: 2,
     },
@@ -153,7 +134,10 @@ const useStyles = makeStyles()((theme, { sidebarWidth, sidebarDisableMaxHeight }
   },
   sidebarInnerStickyContainer: {
     // Sticky properties injected via CSS to handle webkit position prop
-    top: '40px',
+    top: 'calc(var(--neon-header-offset, 0px) + var(--neon-sidebar-inset, 40px))',
+    maxHeight: sidebarDisableMaxHeight ? 'none' : 'calc(100dvh - var(--neon-header-offset, 0px) - var(--neon-sidebar-inset, 40px) - 24px)',
+    overflowY: sidebarDisableMaxHeight ? 'visible' : 'auto',
+    overflowX: 'hidden',
   },
   sidebarTitleContainer: {
     display: 'flex',
@@ -389,7 +373,6 @@ const NeonPage = (inProps) => {
   const headerRef = useRef(null);
   const contentRef = useRef(null);
   const sidebarRef = useRef(null);
-  const sidebarLinksContainerRef = useRef(null);
   const belowMd = useMediaQuery(theme.breakpoints.down('md'));
   // #neon edit
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
@@ -430,114 +413,13 @@ const NeonPage = (inProps) => {
   })();
   const currentSidebarHash = initialCurrentSidebarHash;
   // const [currentSidebarHash, setCurrentSidebarHash] = useState(initialCurrentSidebarHash);
-  const hashInitializedRef = useRef(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false); // for small viewports only
 
-  // Get the vertical pixel offset for the content associated to any sidebar link by hash
-  const sidebarLinkScrollPositionNudge = getThemeSpacingNumber(theme.spacing(5));
-  const getSidebarLinkScrollPosition = useCallback((hash, inSidebarLinksAsStandaloneChildren) => {
-    if (!hasSidebarLinks || inSidebarLinksAsStandaloneChildren || !contentRef.current) {
-      return -1;
-    }
-    const headerOffset = (headerRef.current || {}).offsetHeight || 0;
-    const stickyOffset = belowMd ? (sidebarRef.current || {}).offsetHeight || 0 : 0;
-    if (hash === '#') { return 0; }
-    const anchor =
-      typeof hash === 'string' && hash.startsWith('#')
-        ? contentRef.current?.querySelector(
-            `#${CSS.escape(hash.slice(1))}`
-          )
-        : null;
-    return !anchor
-      ? -1
-      : anchor.offsetTop + headerOffset - stickyOffset - sidebarLinkScrollPositionNudge;
-  }, [
-    hasSidebarLinks,
-    belowMd,
-    contentRef,
-    headerRef,
-    sidebarRef,
-    sidebarLinkScrollPositionNudge,
-  ]);
-
-  const handleHashNav = useCallback((hashNav) => {
-    window.location.hash = hashNav;
-  }, []);
-
-  /**
-     Effect - For sidebarLinks pages, on successful load, if hash is present then update the current
-  */
-  useLayoutEffect(() => {
-    if (error || loading || !hasSidebarLinks) { return () => { }; }
-    const handleHashChange = () => {
-      const { hash } = document.location;
-      if (currentSidebarHash === hash) { return; }
-      // setCurrentSidebarHash(hash);
-      // If standard sidebar mode (scroll to content) also perform the scroll offset here
-      if (!sidebarLinksAsStandaloneChildren) {
-        window.setTimeout(() => {
-          window.scrollTo(0, getSidebarLinkScrollPosition(hash, sidebarLinksAsStandaloneChildren) - 40);
-        }, 0);
-      }
-    };
-    // Handle URL-defined hash on initial load
-    if (document.location.hash && !hashInitializedRef.current) {
-      hashInitializedRef.current = true;
-      handleHashChange();
-    }
-    // Set max-height on sidebar links container when the sidebar is sticky so the links get
-    // a dedicated scrollbar instead of clipping
-    if (
-      !sidebarUnsticky
-      && hasSidebarLinks
-      && sidebarLinksContainerRef.current
-      && !sidebarDisableMaxHeight
-    ) {
-      const maxHeight = window.innerHeight - sidebarLinksContainerRef.current.offsetTop - 104;
-      sidebarLinksContainerRef.current.style.maxHeight = `${maxHeight}px`;
-    }
-    // For sidebarLinksAsStandaloneChildren listen for hash changes to trigger a "redirect".
-    if (sidebarLinksAsStandaloneChildren) {
-      window.addEventListener('hashchange', handleHashChange);
-      return () => {
-        window.removeEventListener('hashchange', handleHashChange);
-      };
-    }
-    // Set up event listener / handler for user-input scroll events for standard scrolling pages
-    const handleScroll = () => {
-      const scrollBreaks = sidebarLinks.map((link) => ({
-        y: getSidebarLinkScrollPosition(link.hash || '#', sidebarLinksAsStandaloneChildren),
-        hash: link.hash || '#',
-      }));
-      // Determine the current scrolled-to hash. If at the max scroll always go to the last hash.
-      // Otherwise choose from scroll position relative to scroll breakpoints.
-      const detectionBuffer = 80; // Extra pixels to highlight the next link when we're close enough
-      const currentScrolledHash = isAtMaxScroll()
-        ? scrollBreaks[scrollBreaks.length - 1].hash
-        : scrollBreaks.reduce((acc, curr) => (
-          (curr.y !== -1 && window.scrollY >= curr.y - detectionBuffer) ? curr.hash : acc
-        ), sidebarLinks[0].hash || '#');
-    };
-    window.addEventListener('scroll', handleScroll);
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-    };
-  }, [
-    error,
-    loading,
-    sidebarLinks,
-    sidebarHashMap,
-    sidebarUnsticky,
-    sidebarDisableMaxHeight,
-    hasSidebarLinks,
-    hashInitializedRef,
-    currentSidebarHash,
-    // setCurrentSidebarHash,
-    handleHashNav,
-    sidebarLinksContainerRef,
-    getSidebarLinkScrollPosition,
-    sidebarLinksAsStandaloneChildren,
-  ]);
+  useLayoutEffect(() => observePageOffsets({
+    getHeader: () => headerRef.current,
+    getSidebar: () => sidebarRef.current,
+    getContent: () => contentRef.current,
+  }), []);
 
   /**
      Effect - Load Drupal CSS
@@ -827,7 +709,6 @@ const NeonPage = (inProps) => {
     const fullLinks = (
       <>
         <div
-          ref={sidebarLinksContainerRef}
           className={classes.sidebarLinksContainer}
         >
           {sidebarLinks.map((link) => renderLink(link))}

@@ -136,22 +136,12 @@ export default function BiorepoPage() {
       sidebarContent={hasSearchSidebar ? <BiorepoSearchSidebar /> : isSampleCatalog ? <div id="biorepo-catalog-filters" /> : isCollectionProfile ? <div id="biorepo-profile-navigation" /> : null}
       sidebarContentResponsive={isSampleCatalog || hasSearchSidebar}
       sidebarContentKeepMounted={hasSearchSidebar}
-      sidebarDisableMaxHeight={hasCustomSidebar}
-      sidebarUnsticky={isSampleCatalog}
+      sidebarDisableMaxHeight={isCollectionProfile}
       sidebarWidth={isSampleCatalog || hasSearchSidebar ? 340 : 300}
       sidebarTitle={isSampleCatalog ? 'Filter' : isRecordResults ? 'Search Results' : isRecordSearch ? 'Search' : isCollectionProfile ? '' : sidebarTitle}
       sidebarContainerClassName={hasSearchSidebar ? 'search-sidebar' : isSampleCatalog ? 'catalog-sidebar' : isCollectionProfile ? 'profile-sidebar' : undefined}
     >
       <GlobalStyles styles={(theme) => ({
-        '.search-sidebar > .neon__sidebar-sticky': {
-          position: 'sticky',
-          top: 'calc(var(--search-header-offset, 0px) + var(--search-sidebar-inset, 40px))',
-          maxHeight: 'calc(100dvh - var(--search-header-offset, 0px) - var(--search-sidebar-inset, 40px) - 24px)',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          width: '100%',
-          boxSizing: 'border-box',
-        },
         '.search-sidebar .MuiTypography-h5': {
           fontSize: `${theme.typography.h5.fontSize} !important`,
           ...Object.fromEntries(
@@ -166,17 +156,9 @@ export default function BiorepoPage() {
         },
         '.search-sidebar .MuiCollapse-wrapperInner': { paddingTop: '16px' },
         '.search-sidebar .MuiCollapse-wrapperInner > .MuiDivider-root': { display: 'none' },
-        [theme.breakpoints.down('md')]: {
-          '.search-sidebar:has(#biorepo-search-controls)': {
-            top: 'var(--search-header-offset, 0px)',
-            maxHeight: 'calc(100dvh - var(--search-header-offset, 0px))',
-            overflowY: 'auto',
-          },
-        },
       })} />
       {(isSampleCatalog || isCollectionProfile) && (
         <GlobalStyles styles={(theme) => ({
-          '#header': { position: 'relative !important', top: 'auto !important' },
           '.catalog-sidebar > div > .MuiDivider-root': { display: 'none' },
           '.profile-sidebar': { paddingTop: '24px' },
           '.profile-sidebar + [data-selenium="neon-page.content"]': {
@@ -186,8 +168,8 @@ export default function BiorepoPage() {
           // The host must stick inside the full-height sidebar, not inside its own short wrapper.
           '.profile-sidebar > #biorepo-profile-navigation': {
             position: 'sticky',
-            top: '24px',
-            maxHeight: 'calc(100vh - 48px)',
+            top: 'calc(var(--neon-header-offset, 0px) + 24px)',
+            maxHeight: 'calc(100dvh - var(--neon-header-offset, 0px) - 48px)',
             overflowY: 'auto',
             overflowX: 'hidden',
             width: '100%',
@@ -199,7 +181,7 @@ export default function BiorepoPage() {
             },
             '.profile-sidebar': {
               position: 'sticky',
-              top: 0,
+              top: 'var(--neon-header-offset, 0px)',
               padding: '12px 16px',
               zIndex: 10,
             },

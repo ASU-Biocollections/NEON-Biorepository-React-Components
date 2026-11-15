@@ -164,7 +164,6 @@
 .main > section {
   border-top: 1px solid #d9dfe3;
   padding: 32px 0;
-  scroll-margin-top: 24px;
 }
 .header {
   padding-bottom: 28px;
@@ -791,7 +790,6 @@
   margin-top: 6px;
 }
 .statistics {
-  scroll-margin-top: 24px;
 }
 .profile.profile .statistics > h3 {
   font-size: 28px;
@@ -976,12 +974,10 @@
     outline: 2px solid #0073cf;
     outline-offset: 2px;
   }
-  .profile .main > section {
-    scroll-margin-top: 180px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .mobileSidebarToggle svg {
     transition: none;
   }
 }
+
