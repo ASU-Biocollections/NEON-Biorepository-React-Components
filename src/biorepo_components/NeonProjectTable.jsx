@@ -411,7 +411,7 @@ function NeonTableContent() {
           <TextField
             size="small"
             label="Search projects"
-            placeholder="Title, description, PI, or institution"
+            placeholder="Title, description, PI, or lead institution"
             value={search}
             disabled={!!config.error}
             onChange={event => setSearch(event.target.value)}
