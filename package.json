@@ -34,6 +34,7 @@
     "@stomp/rx-stomp": "^2.4.0",
     "@stomp/stompjs": "^7.3.0",
     "@types/wicg-file-system-access": "^2023.10.7",
+    "col-browser": "2.9.0",
     "core-js": "^3.50.0",
     "d3-array": "^3.2.4",
     "d3-axis": "^3.0.0",

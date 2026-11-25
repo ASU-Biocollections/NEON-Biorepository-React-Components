@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider } from '@mui/material/styles';
 import theme from '../../lib_components/components/Theme';
+
 export default function ClientOnly() {
   useEffect(() => {
   
@@ -24,6 +26,34 @@ export default function ClientOnly() {
       ['neon-table', () => import('../../biorepo_components/NeonTable')],
       ['neon-project-table', () => import('../../biorepo_components/NeonProjectTable')],
     ] as const;
+
+    const taxonomyMounts = [
+      ['neon-taxonomy-editor', async (element: HTMLElement) => {
+        const { default: TaxonomyEditor } = await import(
+          '../../biorepo_components/taxonomy/TaxonomyEditor',
+        );
+        return (
+          <TaxonomyEditor
+            apiUrl={element.dataset.apiUrl ?? ''}
+            csrfToken={element.dataset.csrfToken ?? ''}
+          />
+        );
+      }],
+      ['neon-taxonomy-explorer', async (element: HTMLElement) => {
+        const { default: TaxonomyExplorer, configureTaxonomyExplorer } = await import(
+          '../../biorepo_components/taxonomy/TaxonomyExplorer',
+        );
+        const { apiUrl, colApiUrl } = element.dataset;
+        if (colApiUrl) configureTaxonomyExplorer(colApiUrl);
+        return <TaxonomyExplorer apiUrl={colApiUrl ? apiUrl ?? '' : ''} />;
+      }],
+    ] as const;
+
+    function renderMount(element: HTMLElement, component: ReactNode) {
+      const root = createRoot(element);
+      root.render(<ThemeProvider theme={theme}>{component}</ThemeProvider>);
+      roots.push(root);
+    }
 
     async function mountComponents() {
       // BiorepoPage is first in the mounts array.
@@ -81,15 +111,16 @@ export default function ClientOnly() {
         if (cancelled) return;
     
         const Component = module.default;
-        const root = createRoot(element);
-    
-        root.render(
-          <ThemeProvider theme={theme}>
-            <Component />
-          </ThemeProvider>
-        );
-        roots.push(root);
+        renderMount(element, <Component />);
       }
+
+      await Promise.all(taxonomyMounts.map(async ([id, render]) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+
+        const component = await render(element);
+        if (!cancelled) renderMount(element, component);
+      }));
     }
 
     void mountComponents();

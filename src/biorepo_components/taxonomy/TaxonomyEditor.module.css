@@ -1,0 +1,201 @@
+.editor {
+  --tax-text: #203044;
+  --tax-muted: #536579;
+  --tax-primary: #165d9c;
+  --tax-border: #d6e0e7;
+  --tax-low: #f4f8fb;
+  --tax-paper: #fff;
+  color: var(--tax-text);
+  font-size: 15px;
+  line-height: 1.45;
+  width: 100%;
+}
+
+.editor *, .editor *::before, .editor *::after { box-sizing: border-box; }
+
+.editor input, .editor select {
+  background: var(--tax-paper);
+  border: 1px solid var(--tax-border);
+  border-radius: 4px;
+  color: var(--tax-text);
+  font: inherit;
+  margin: 0;
+  min-height: 34px;
+  min-width: 0;
+  padding: 5px 9px;
+}
+
+.editor input:focus-visible, .editor select:focus-visible, .editor button:focus-visible, .editor a:focus-visible {
+  outline: 2px solid var(--tax-primary);
+  outline-offset: 2px;
+}
+
+.toolbar {
+  align-items: center;
+  border-bottom: 1px solid var(--tax-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.nav { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--tax-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 13px;
+}
+
+.tab[aria-current] { border-bottom-color: var(--tax-primary); color: var(--tax-primary); font-weight: 600; }
+
+.workspace { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.panel {
+  background: var(--tax-paper);
+  border: 1px solid var(--tax-border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.panelHeader {
+  align-items: center;
+  background: var(--tax-low);
+  border-bottom: 1px solid var(--tax-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 7px 12px;
+}
+
+.panelTitle { color: var(--tax-text); font-size: 16px; font-weight: 600; line-height: 1.35; margin: 0; }
+.actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.button, .primary {
+  background: var(--tax-paper);
+  border: 1px solid var(--tax-border);
+  border-radius: 4px;
+  color: var(--tax-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.93em;
+  min-height: 32px;
+  padding: 5px 10px;
+  text-align: center;
+}
+
+.button:hover:not(:disabled) { background: var(--tax-low); border-color: #90a9ba; }
+.primary { background: var(--tax-primary); border-color: var(--tax-primary); color: #fff; }
+.primary:hover:not(:disabled) { background: #114b7f; }
+.button:disabled, .primary:disabled { cursor: default; opacity: 0.57; }
+
+.search { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; padding: 9px 12px; }
+.search input { flex: 1 1 110px; }
+.field .search { padding: 0; }
+
+.treeScroll {
+  min-height: 280px;
+  max-height: min(56vh, 560px);
+  overflow: auto;
+  padding: 0 12px 12px;
+}
+
+.treeList, .pickerResults { list-style: none; margin: 0; padding: 0; }
+.treeList > li, .pickerResults > li { list-style: none; margin: 2px 0; padding: 0; }
+.treeRow { align-items: flex-start; display: flex; gap: 2px; }
+.branch { border-left: 1px solid #e0e8ef; margin-left: 11px; padding-left: 12px; }
+
+.expand, .treeSpacer {
+  background: none;
+  border: 0;
+  color: var(--tax-primary);
+  flex: 0 0 20px;
+  font: inherit;
+  height: 29px;
+  line-height: 29px;
+  padding: 0;
+  text-align: center;
+}
+
+.expand { cursor: pointer; font-size: 18px; }
+.expand:hover { background: var(--tax-low); }
+
+.nameButton {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--tax-text);
+  cursor: pointer;
+  display: inline-block;
+  font: inherit;
+  min-height: 29px;
+  overflow-wrap: anywhere;
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.nameButton:hover { background: var(--tax-low); }
+.nameButton[aria-pressed='true'] { background: #e6f1fa; border-color: #a5cbe5; color: #134065; }
+.rank, .author, .muted { color: var(--tax-muted); }
+.rank { font-size: 0.83em; text-transform: lowercase; }
+.author { font-size: 0.86em; }
+.synonym { border: 1px solid #e5c585; border-radius: 3px; color: #78531a; font-size: 0.76em; margin-left: 7px; padding: 1px 4px; }
+
+.selection { display: grid; gap: 10px; margin-top: 14px; padding: 12px; }
+.selection p, .actions p, .form p { margin: 0; }
+.selection .actions { justify-content: space-between; }
+.selectedName { background: #e6f1fa; border-radius: 4px; display: inline-block; padding: 4px 8px; }
+.panelBody { display: grid; gap: 12px; padding: 12px; }
+.panelBody p { margin: 0; }
+
+.pickerResults { background: var(--tax-paper); border: 1px solid var(--tax-border); border-radius: 4px; max-height: 11rem; overflow: auto; padding: 4px; }
+.pickerResults .nameButton { width: 100%; }
+
+.notice, .error {
+  background: #eaf5fc;
+  border-left: 3px solid var(--tax-primary);
+  color: var(--tax-text);
+  margin: 10px 0;
+  padding: 7px 10px;
+}
+
+.error { background: #fff0ed; border-color: #b32f23; color: #812419; }
+.panel > .error { margin: 0 12px 9px; }
+
+.dialog {
+  background: var(--tax-paper);
+  border: 1px solid var(--tax-border);
+  border-radius: 6px;
+  color: var(--tax-text);
+  max-height: calc(100dvh - 36px);
+  padding: 0;
+  width: min(590px, calc(100vw - 32px));
+}
+
+.dialog::backdrop { background: rgb(16 31 45 / 48%); }
+.form { display: grid; gap: 12px; padding: 14px; }
+.field { display: grid; gap: 4px; margin: 0; }
+.field > label, label.field { font-weight: 600; }
+.field input, .field select { font-weight: 400; }
+
+.tableScroll { overflow-x: auto; }
+.table { border-collapse: collapse; font-size: 0.94em; width: 100%; }
+.table th, .table td { border-bottom: 1px solid var(--tax-border); padding: 8px; text-align: left; vertical-align: top; }
+.table th { background: var(--tax-low); font-weight: 600; }
+.table .actions { width: max-content; }
+.datasetList { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.datasetList > li { list-style: none; margin: 0; }
+.details { display: grid; gap: 8px; padding: 8px; }
+.details h3 { color: var(--tax-text); font-size: 15px; margin: 0; }
+
+@media (max-width: 760px) {
+  .workspace { grid-template-columns: 1fr; }
+  .treeScroll { min-height: 190px; max-height: 360px; }
+}
