@@ -6,9 +6,9 @@ const fs = require('fs-extra');
 const path = require('path');
 
 const sourceDir = '/usr/src/NEON-Biorepository-React-Components/build';
-const targetDir = '/mnt/c/xampp/htdocs/neon/neon-react/core-components';
-const reactHeadPath = '/mnt/c/xampp/htdocs/neon/includes/react_head.php';
-const footerPath = '/mnt/c/xampp/htdocs/neon/includes/footer.php';
+const targetDir = '/mnt/c/xampp/htdocs/portal/neon-react/core-components';
+const reactHeadPath = '/mnt/c/xampp/htdocs/portal/includes/react_head.php';
+const footerPath = '/mnt/c/xampp/htdocs/portal/includes/footer.php';
 
 const indexFilePath = path.join(sourceDir, 'index.html');
 
