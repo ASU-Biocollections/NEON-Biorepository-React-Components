@@ -25,6 +25,7 @@ interface Taxon {
 
 interface TaxonDetail extends Taxon {
   acceptedTaxon?: Taxon | null;
+  acceptedLinks?: Taxon[];
   classification?: Taxon[];
   synonyms?: Taxon[];
   recordsTaxa?: string;
@@ -481,7 +482,11 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     return <Alert severity="error">The taxonomy explorer is unavailable.</Alert>;
   }
 
-  const acceptedTaxon = selected?.acceptedTaxon;
+  const primaryAccepted = selected?.acceptedTaxon;
+  const acceptedNames = new Map<number, Taxon>();
+  if (primaryAccepted) acceptedNames.set(primaryAccepted.tid, primaryAccepted);
+  selected?.acceptedLinks?.forEach((taxon) => acceptedNames.set(taxon.tid, taxon));
+  const otherSynonyms = selected?.synonyms?.filter((taxon) => taxon.tid !== selected.tid) ?? [];
   return (
     <Box sx={{
       display: 'grid',
@@ -647,12 +652,18 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   />
                 </Box>
               )}
-              {acceptedTaxon && (
+              {acceptedNames.size > 0 && (
                 <Box sx={detailSectionStyle}>
-                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>
-                    Accepted name
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
+                    Accepted Name(s)
                   </Typography>
-                  <Typography variant="body2">{detailLink(acceptedTaxon)}</Typography>
+                  <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
+                    {Array.from(acceptedNames.values(), (taxon) => (
+                      <Typography component="li" variant="body2" key={taxon.tid}>
+                        {detailLink(taxon)}
+                      </Typography>
+                    ))}
+                  </Stack>
                 </Box>
               )}
               {!!selected.classification?.length && (
@@ -687,13 +698,13 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   </Stack>
                 </Box>
               )}
-              {!!selected.synonyms?.length && (
+              {otherSynonyms.length > 0 && (
                 <Box sx={detailSectionStyle}>
                   <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
                     Synonyms
                   </Typography>
                   <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
-                    {selected.synonyms.map((synonym) => (
+                    {otherSynonyms.map((synonym) => (
                       <Typography component="li" variant="body2" key={synonym.tid}>
                         {detailLink(synonym)}
                       </Typography>
