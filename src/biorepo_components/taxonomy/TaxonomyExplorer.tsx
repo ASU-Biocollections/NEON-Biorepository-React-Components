@@ -27,6 +27,7 @@ interface TaxonDetail extends Taxon {
   acceptedTaxon?: Taxon | null;
   classification?: Taxon[];
   synonyms?: Taxon[];
+  recordsTaxa?: string;
 }
 
 type TaxonResult = { tid: string; taxon: TaxonDetail } | { tid: string; error: string };
@@ -101,10 +102,10 @@ function recordsOnlyFromLocation() {
   return new URLSearchParams(window.location.search).get('records') === '1';
 }
 
-function recordsListLink(apiUrl: string, tid: number) {
+function recordsListLink(apiUrl: string, taxon: TaxonDetail) {
   const url = new URL('../../collections/list.php', new URL(apiUrl, window.location.href));
   url.searchParams.set('db', 'all,all-others');
-  url.searchParams.set('taxa', String(tid));
+  url.searchParams.set('taxa', taxon.recordsTaxa ?? String(taxon.tid));
   return url.href;
 }
 
@@ -505,7 +506,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     View Taxon Profile
                   </Button>
                   <Button
-                    href={recordCount === 0 ? undefined : recordsListLink(apiUrl, selected.tid)}
+                    href={recordCount === 0 ? undefined : recordsListLink(apiUrl, selected)}
                     disabled={recordCount === 0}
                     variant="contained"
                     size="medium"
