@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import type { MouseEvent } from 'react';
+import type { ChangeEvent, MouseEvent, SyntheticEvent } from 'react';
+import ChevronRight from '@mui/icons-material/ChevronRight';
 import {
-  Alert, Box, Chip, CircularProgress, Divider, Link, Paper, Stack, Typography,
+  Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, Link, Paper, Stack, Switch,
+  Typography,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { configure } from 'col-browser/config';
@@ -29,6 +31,16 @@ interface TaxonDetail extends Taxon {
 
 type TaxonResult = { tid: string; taxon: TaxonDetail } | { tid: string; error: string };
 
+interface RecordPhoto {
+  url: string;
+  thumbnailUrl: string | null;
+  recordUrl: string;
+  caption: string | null;
+  credit: string | null;
+}
+
+type PhotoResult = { tid: number; photo: RecordPhoto | null };
+
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
 
@@ -51,16 +63,24 @@ function selectedTaxon() {
   return tid && /^[1-9]\d*$/.test(tid) ? tid : undefined;
 }
 
+function recordsOnlyFromLocation() {
+  return new URLSearchParams(window.location.search).get('records') === '1';
+}
+
 export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
+  const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
   const [activeTid, setActiveTid] = useState(selectedTaxon);
   const [revealInTree, setRevealInTree] = useState(true);
   const [expandedTid, setExpandedTid] = useState<string>();
   const [treeVisit, setTreeVisit] = useState(0);
   const [result, setResult] = useState<TaxonResult | null>(null);
+  const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
   const error = publicResult && 'error' in publicResult ? publicResult.error : null;
+  const photoTid = selected?.tid;
+  const photo = photoResult?.tid === photoTid ? photoResult?.photo : null;
 
   const expandToTaxon = useCallback((tid: string | undefined) => {
     setExpandedTid(tid);
@@ -71,6 +91,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   useEffect(() => {
     function onPopState() {
       const tid = selectedTaxon();
+      setRecordsOnly(recordsOnlyFromLocation());
       setActiveTid(tid);
       setRevealInTree(true);
       if (!tid) expandToTaxon(undefined);
@@ -115,6 +136,58 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     loadTaxon();
     return () => controller.abort();
   }, [activeTid, apiUrl, expandToTaxon, revealInTree]);
+
+  useEffect(() => {
+    if (!apiUrl || !photoTid) return undefined;
+    const tid = photoTid;
+    const controller = new AbortController();
+    const url = new URL(apiUrl, window.location.href);
+    url.searchParams.set('action', 'taxon-photo');
+    url.searchParams.set('tid', String(tid));
+
+    async function loadPhoto() {
+      try {
+        const response = await fetch(url, {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const { data }: { data?: RecordPhoto | null } = await response.json();
+        if (!controller.signal.aborted) setPhotoResult({ tid, photo: data ?? null });
+      } catch {
+        // The details card can be read even if its optional photo request fails.
+      }
+    }
+
+    loadPhoto();
+    return () => controller.abort();
+  }, [apiUrl, photoTid]);
+
+  const changeRecordsFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target;
+    const url = new URL(taxonLink());
+    if (checked) {
+      url.searchParams.set('records', '1');
+    } else {
+      url.searchParams.delete('records');
+    }
+    window.history.pushState(null, '', url.href);
+    setRecordsOnly(checked);
+    setActiveTid(undefined);
+    setExpandedTid(undefined);
+    setResult(null);
+  }, []);
+
+  const handlePhotoError = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
+    if (!photo) return;
+    const image = event.currentTarget;
+    const fullUrl = new URL(photo.url, window.location.href).href;
+    if (image.src !== fullUrl) {
+      image.src = fullUrl;
+    } else {
+      setPhotoResult(null);
+    }
+  }, [photo]);
 
   const openTaxon = useCallback((tid: string, reveal = false) => {
     if (!/^[1-9]\d*$/.test(tid)) return;
@@ -201,9 +274,22 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           [`& ${speciesCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
         }}
       >
+        <FormControlLabel
+          label="Only taxa with records"
+          control={(
+            <Switch
+              color="primary"
+              size="medium"
+              checked={recordsOnly}
+              onChange={changeRecordsFilter}
+              slotProps={{ input: { role: 'switch' } }}
+            />
+          )}
+          sx={{ mb: 1 }}
+        />
         <Tree
-          key={treeVisit}
-          datasetKey={1}
+          key={`${recordsOnly}-${treeVisit}`}
+          datasetKey={recordsOnly ? 2 : 1}
           autoFocus={false}
           insertPlaceholder={false}
           defaultTaxonKey={expandedTid}
@@ -272,7 +358,47 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     )}
                   </Stack>
                 )}
+                <Button
+                  href={taxonProfileLink(String(selected.tid))}
+                  variant="contained"
+                  color="primary"
+                  size="medium"
+                  fullWidth
+                  endIcon={<ChevronRight />}
+                  sx={{ mt: 2 }}
+                >
+                  View Taxon Profile
+                </Button>
               </Box>
+              {photo && (
+                <Box component="figure" sx={{ ...detailSectionStyle, m: 0 }}>
+                  <Link href={photo.recordUrl} sx={{ display: 'block' }}>
+                    <Box
+                      component="img"
+                      src={photo.thumbnailUrl || photo.url}
+                      alt={photo.caption || 'Photo from a specimen record'}
+                      onError={handlePhotoError}
+                      sx={{
+                        display: 'block',
+                        width: '100%',
+                        maxHeight: 224,
+                        objectFit: 'contain',
+                        borderRadius: 1,
+                      }}
+                    />
+                  </Link>
+                  {(photo.caption || photo.credit) && (
+                    <Box component="figcaption" sx={{ mt: 1 }}>
+                      {photo.caption && <Typography variant="body2">{photo.caption}</Typography>}
+                      {photo.credit && (
+                        <Typography variant="caption" color="text.secondary">
+                          {photo.credit}
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              )}
               {acceptedTaxon && (
                 <Box sx={detailSectionStyle}>
                   <Typography variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>
