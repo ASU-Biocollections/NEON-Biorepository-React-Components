@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, MouseEvent, SyntheticEvent } from 'react';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import {
@@ -42,9 +42,41 @@ interface RecordPhoto {
 type PhotoResult = { tid: number; photo: RecordPhoto | null };
 
 type RecordCountResult = { tid: number; count: number };
+type CachedRecordCount = { count: number; expiresAt: number };
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
+const recordCountTtlMs = 60_000;
+const descendantRowSelector = '[role="treeitem"]:has(.ant-tree-indent-unit)';
+const caretSelector = '.catalogue-of-life .ant-tree .ant-tree-switcher-icon svg';
+const branchAnimation = {
+  '@keyframes neonTaxonomyBranchEnter': {
+    from: { opacity: 0, transform: 'translateY(-3px)' },
+    to: { opacity: 1, transform: 'translateY(0)' },
+  },
+  [`& ${caretSelector}`]: { transition: 'transform 180ms ease' },
+  [`& ${descendantRowSelector}`]: { animation: 'neonTaxonomyBranchEnter 160ms ease-out' },
+  [`& .ant-tree-treenode-motion ${descendantRowSelector}`]: { animation: 'none' },
+  '@media (prefers-reduced-motion: reduce)': {
+    [`& ${caretSelector}`]: { transition: 'none' },
+    '& .ant-tree-treenode-motion.ant-motion-collapse': { transitionDuration: '1ms !important' },
+    [`& ${descendantRowSelector}`]: { animation: 'none' },
+  },
+};
+
+function getExpandableRows(section: HTMLElement) {
+  const rows = section.querySelectorAll<HTMLElement>('[role="treeitem"][aria-expanded]');
+  return Array.from(rows).flatMap((row) => {
+    if (row.closest('.ant-tree-treenode-motion')) return [];
+    const switcher = row.querySelector<HTMLElement>(
+      '.ant-tree-switcher:not(.ant-tree-switcher-noop)',
+    );
+    const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
+    const key = link && new URL(link.href).searchParams.get('tid');
+    if (!switcher || !key) return [];
+    return [{ key, switcher, expanded: row.getAttribute('aria-expanded') === 'true' }];
+  });
+}
 
 export function configureTaxonomyExplorer(colApiUrl: string) {
   configure({ dataApi: new URL(colApiUrl, window.location.href).href });
@@ -82,9 +114,15 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [revealInTree, setRevealInTree] = useState(true);
   const [expandedTid, setExpandedTid] = useState<string>();
   const [treeVisit, setTreeVisit] = useState(0);
+  const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
   const [recordResult, setRecordResult] = useState<RecordCountResult | null>(null);
+  const treeSection = useRef<HTMLElement>(null);
+  const expandedKeys = useRef(new Set<string>());
+  const pendingKeys = useRef<Set<string> | null>(null);
+  const restoringExpansion = useRef(false);
+  const recordCountCache = useRef(new Map<number, CachedRecordCount>());
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
@@ -93,24 +131,94 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const photo = photoResult?.tid === detailTid ? photoResult?.photo : null;
   const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
 
-  const expandToTaxon = useCallback((tid: string | undefined) => {
-    setExpandedTid(tid);
-    // The tree applies a host-driven expansion when it loads.
+  const rememberExpansion = useCallback(() => {
+    if (!treeSection.current) return;
+    // Keep entries for branches hidden by the records filter or a collapsed ancestor.
+    for (const { key, expanded } of getExpandableRows(treeSection.current)) {
+      if (expanded) {
+        expandedKeys.current.add(key);
+      } else if (!pendingKeys.current?.has(key)) {
+        expandedKeys.current.delete(key);
+      }
+    }
+    setExpansionPlan([...expandedKeys.current]);
+  }, []);
+
+  useEffect(() => {
+    const section = treeSection.current;
+    const pending = new Set(expansionPlan);
+    pendingKeys.current = pending;
+    if (!section || !pending.size) return undefined;
+
+    let frame = 0;
+
+    function restoreNext() {
+      frame = 0;
+      if (!section || pending !== pendingKeys.current) return;
+      if (section.querySelector('.ant-tree-treenode-motion')) return;
+      for (const { key, switcher, expanded } of getExpandableRows(section)) {
+        if (!pending.has(key)) continue;
+        if (expanded) {
+          pending.delete(key);
+        } else {
+          restoringExpansion.current = true;
+          try {
+            switcher.click();
+          } finally {
+            restoringExpansion.current = false;
+          }
+          return;
+        }
+      }
+      if (!pending.size) observer.disconnect();
+    }
+
+    function scheduleRestore() {
+      if (frame || !pending.size || pending !== pendingKeys.current) return;
+      frame = window.requestAnimationFrame(restoreNext);
+    }
+
+    // CoL exposes a single initial key. Restore visible saved branches as it loads them.
+    const observer = new MutationObserver(scheduleRestore);
+    observer.observe(section, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['aria-expanded'],
+    });
+    scheduleRestore();
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [expansionPlan, treeVisit]);
+
+  const revealLineage = useCallback((taxon: TaxonDetail) => {
+    // The ancestors open the path without expanding the selected taxon itself.
+    setExpansionPlan(taxon.classification?.map(({ tid }) => String(tid)) ?? []);
+  }, []);
+
+  const resetTree = useCallback(() => {
+    setExpansionPlan([]);
+    setExpandedTid(undefined);
     setTreeVisit((visit) => visit + 1);
   }, []);
 
   useEffect(() => {
     function onPopState() {
       const tid = selectedTaxon();
-      setRecordsOnly(recordsOnlyFromLocation());
+      const nextRecordsOnly = recordsOnlyFromLocation();
+      const filterChanged = nextRecordsOnly !== recordsOnly;
+      if (filterChanged) {
+        rememberExpansion();
+        setExpandedTid(undefined);
+      }
+      setRecordsOnly(nextRecordsOnly);
       setActiveTid(tid);
-      setRevealInTree(true);
-      if (!tid) expandToTaxon(undefined);
+      setRevealInTree(!filterChanged);
+      if (!tid && !filterChanged) resetTree();
     }
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [expandToTaxon]);
+  }, [recordsOnly, rememberExpansion, resetTree]);
 
   useEffect(() => {
     if (!activeTid || !apiUrl) return undefined;
@@ -134,7 +242,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         if (controller.signal.aborted) return;
         setResult({ tid, taxon: body.data });
         if (revealInTree) {
-          expandToTaxon(String(body.data.acceptedTaxon?.tid ?? body.data.tid));
+          revealLineage(body.data);
         }
       } catch (reason) {
         if (!controller.signal.aborted) {
@@ -146,11 +254,11 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
     loadTaxon();
     return () => controller.abort();
-  }, [activeTid, apiUrl, expandToTaxon, revealInTree]);
+  }, [activeTid, apiUrl, revealInTree, revealLineage]);
 
   useEffect(() => {
-    if (!apiUrl || !detailTid) return undefined;
-    const tid = detailTid;
+    if (!apiUrl || !activeTid) return undefined;
+    const tid = Number(activeTid);
     const controller = new AbortController();
 
     async function loadRecordData<T>(action: string, onLoad: (data: T) => void) {
@@ -173,11 +281,19 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     loadRecordData<RecordPhoto | null>('taxon-photo', (newPhoto) => {
       setPhotoResult({ tid, photo: newPhoto });
     });
-    loadRecordData<{ count: number }>('taxon-records', ({ count }) => {
-      setRecordResult({ tid, count });
-    });
+    const cached = recordCountCache.current.get(tid);
+    if (cached && cached.expiresAt > Date.now()) {
+      queueMicrotask(() => {
+        if (!controller.signal.aborted) setRecordResult({ tid, count: cached.count });
+      });
+    } else {
+      loadRecordData<{ count: number }>('taxon-records', ({ count }) => {
+        recordCountCache.current.set(tid, { count, expiresAt: Date.now() + recordCountTtlMs });
+        setRecordResult({ tid, count });
+      });
+    }
     return () => controller.abort();
-  }, [apiUrl, detailTid]);
+  }, [apiUrl, activeTid]);
 
   const changeRecordsFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
@@ -188,11 +304,12 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       url.searchParams.delete('records');
     }
     window.history.pushState(null, '', url.href);
+    rememberExpansion();
     setRecordsOnly(checked);
     setActiveTid(undefined);
     setExpandedTid(undefined);
     setResult(null);
-  }, []);
+  }, [rememberExpansion]);
 
   const handlePhotoError = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
     if (!photo) return;
@@ -213,11 +330,12 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       setActiveTid(tid);
       setRevealInTree(reveal);
     } else if (reveal && selected) {
-      expandToTaxon(String(selected.acceptedTaxon?.tid ?? selected.tid));
+      revealLineage(selected);
     }
-  }, [activeTid, expandToTaxon, selected]);
+  }, [activeTid, revealLineage, selected]);
 
   const revealTaxon = useCallback((tid: string | null) => {
+    if (restoringExpansion.current) return;
     setExpandedTid(tid ?? undefined);
     if (tid) openTaxon(tid);
   }, [openTaxon]);
@@ -281,9 +399,11 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     >
       <Box
         component="section"
+        ref={treeSection}
         aria-label="Taxonomy tree"
         onClickCapture={selectTreeRow}
         sx={{
+          ...branchAnimation,
           minWidth: 0,
           overflowX: 'auto',
           '& .ant-tree-node-content-wrapper': { cursor: 'pointer' },
