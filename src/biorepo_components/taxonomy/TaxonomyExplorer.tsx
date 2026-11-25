@@ -6,6 +6,7 @@ import {
   Typography,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import { configure } from 'col-browser/config';
 import { Tree } from 'col-browser/tree';
 import 'col-browser/style.css';
@@ -51,6 +52,7 @@ type RevealMode = false | 'lineage' | 'keep-open';
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
 const nameStatusSelector = '.neon-taxonomy-name-status';
+const scientificNameSelector = '.neon-taxonomy-scientific-name';
 const recordCountTtlMs = 60_000;
 const descendantRowSelector = '[role="treeitem"]:has(.ant-tree-indent-unit)';
 const caretSelector = '.catalogue-of-life .ant-tree .ant-tree-switcher-icon svg';
@@ -438,25 +440,35 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     return url.href;
   }, [apiUrl]);
 
-  const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
-    markTreeInteraction(event);
-    const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
-    if (event.button !== 0 || modified) return;
-    if (!(event.target instanceof Element)) return;
-    const { target } = event;
-    const row = target.closest('[role="treeitem"]');
-    if (!row || target.closest('.ant-tree-switcher, button, [role="button"]')) return;
-    if (target.closest('a[href]') && !target.closest(
-      `${speciesCountSelector}, ${nameStatusSelector}`,
-    )) return;
+  const openTreeRow = useCallback((row: Element) => {
     const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
     if (!link) return;
     const url = new URL(link.href);
     const tid = url.searchParams.get('tid');
     if (!tid || url.href !== taxonProfileLink(tid)) return;
-    event.preventDefault();
     openTaxon(tid);
-  }, [markTreeInteraction, openTaxon, taxonProfileLink]);
+  }, [openTaxon, taxonProfileLink]);
+
+  const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
+    markTreeInteraction(event);
+    const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (event.button !== 0 || modified) return;
+    const { target } = event;
+    if (!(target instanceof Element)) return;
+    if (target.closest('a[href], button, [role="button"]')) return;
+    if (target.closest('.ant-tree-switcher:not(.ant-tree-switcher-noop)')) return;
+    const row = target.closest('[role="treeitem"]');
+    if (row) openTreeRow(row);
+  }, [markTreeInteraction, openTreeRow]);
+
+  const selectTreeRowFromKeyboard = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    markTreeInteraction(event);
+    if (event.key !== ' ' || !(event.target instanceof Element)) return;
+    if (!event.target.matches('[role="tree"]')) return;
+    const rowId = event.target.getAttribute('aria-activedescendant');
+    const row = rowId ? document.getElementById(rowId) : null;
+    if (row && event.target.contains(row)) openTreeRow(row);
+  }, [markTreeInteraction, openTreeRow]);
 
   function followTaxonLink(event: MouseEvent<HTMLAnchorElement>, tid: string) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -487,6 +499,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   if (primaryAccepted) acceptedNames.set(primaryAccepted.tid, primaryAccepted);
   selected?.acceptedLinks?.forEach((taxon) => acceptedNames.set(taxon.tid, taxon));
   const otherSynonyms = selected?.synonyms?.filter((taxon) => taxon.tid !== selected.tid) ?? [];
+  const activeRow = activeTid ? `[role="treeitem"]:has(.ant-tree-title > [id="${activeTid}"])` : '';
   return (
     <Box sx={{
       display: 'grid',
@@ -500,12 +513,22 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         ref={treeSection}
         aria-label="Taxonomy tree"
         onClickCapture={selectTreeRow}
-        onKeyDownCapture={markTreeInteraction}
+        onKeyDownCapture={selectTreeRowFromKeyboard}
         sx={{
           ...branchAnimation,
           minWidth: 0,
           overflowX: 'auto',
-          '& .ant-tree-node-content-wrapper': { cursor: 'pointer' },
+          '& .ant-tree-treenode': { alignSelf: 'stretch' },
+          '& .ant-tree-node-content-wrapper': { cursor: 'pointer', flex: 1 },
+          '& .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected:not(:hover)': {
+            backgroundColor: 'transparent',
+          },
+          ...(activeRow && {
+            [`& .ant-tree ${activeRow} .ant-tree-node-content-wrapper`]: {
+              backgroundColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.13),
+            },
+          }),
+          [`& ${scientificNameSelector}`]: { color: 'primary.main' },
           [`& ${speciesCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
           [`& ${nameStatusSelector}`]: { color: 'text.secondary', whiteSpace: 'nowrap' },
         }}
@@ -544,7 +567,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           autoFocus={false}
           insertPlaceholder={false}
           onExpandedTaxonKeyChange={handleTreeSelection}
-          hrefForTaxon={taxonProfileLink}
         />
       </Box>
       {activeTid && (
