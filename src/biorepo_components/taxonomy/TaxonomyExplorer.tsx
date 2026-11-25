@@ -41,8 +41,7 @@ interface RecordPhoto {
 
 type PhotoResult = { tid: number; photo: RecordPhoto | null };
 
-type RecordSearch = { count: number; url: string };
-type RecordSearchResult = { tid: number; search: RecordSearch };
+type RecordCountResult = { tid: number; count: number };
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
@@ -70,6 +69,13 @@ function recordsOnlyFromLocation() {
   return new URLSearchParams(window.location.search).get('records') === '1';
 }
 
+function recordsListLink(apiUrl: string, tid: number) {
+  const url = new URL('../../collections/list.php', new URL(apiUrl, window.location.href));
+  url.searchParams.set('db', 'all,all-others');
+  url.searchParams.set('taxa', String(tid));
+  return url.href;
+}
+
 export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
   const [activeTid, setActiveTid] = useState(selectedTaxon);
@@ -78,14 +84,14 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [treeVisit, setTreeVisit] = useState(0);
   const [result, setResult] = useState<TaxonResult | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
-  const [recordResult, setRecordResult] = useState<RecordSearchResult | null>(null);
+  const [recordResult, setRecordResult] = useState<RecordCountResult | null>(null);
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
   const error = publicResult && 'error' in publicResult ? publicResult.error : null;
   const detailTid = selected?.tid;
   const photo = photoResult?.tid === detailTid ? photoResult?.photo : null;
-  const recordSearch = recordResult?.tid === detailTid ? recordResult?.search : null;
+  const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
 
   const expandToTaxon = useCallback((tid: string | undefined) => {
     setExpandedTid(tid);
@@ -167,7 +173,9 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     loadRecordData<RecordPhoto | null>('taxon-photo', (newPhoto) => {
       setPhotoResult({ tid, photo: newPhoto });
     });
-    loadRecordData<RecordSearch>('taxon-records', (search) => setRecordResult({ tid, search }));
+    loadRecordData<{ count: number }>('taxon-records', ({ count }) => {
+      setRecordResult({ tid, count });
+    });
     return () => controller.abort();
   }, [apiUrl, detailTid]);
 
@@ -376,18 +384,17 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   >
                     View Taxon Profile
                   </Button>
-                  {recordSearch && (
-                    <Button
-                      href={recordSearch.url}
-                      variant="contained"
-                      size="medium"
-                      fullWidth
-                      endIcon={<ChevronRight />}
-                    >
-                      {`Browse ${recordSearch.count.toLocaleString()} `}
-                      {recordSearch.count === 1 ? 'Record' : 'Records'}
-                    </Button>
-                  )}
+                  <Button
+                    href={recordCount === 0 ? undefined : recordsListLink(apiUrl, selected.tid)}
+                    disabled={recordCount === 0}
+                    variant="contained"
+                    size="medium"
+                    fullWidth
+                    endIcon={<ChevronRight />}
+                  >
+                    {`Browse ${recordCount?.toLocaleString() ?? '--'} `}
+                    {recordCount === 1 ? 'Record' : 'Records'}
+                  </Button>
                 </Stack>
               </Box>
               {photo && (
