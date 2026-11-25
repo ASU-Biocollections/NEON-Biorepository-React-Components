@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, MouseEvent, SyntheticEvent } from 'react';
+import type { ChangeEvent, KeyboardEvent, MouseEvent } from 'react';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import {
   Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, Link, Paper, Stack, Switch,
@@ -35,12 +35,15 @@ type TaxonResult = { tid: string; taxon: TaxonDetail } | { tid: string; error: s
 interface RecordPhoto {
   url: string;
   thumbnailUrl: string | null;
+  originalUrl?: string | null;
   recordUrl: string;
   caption: string | null;
   credit: string | null;
 }
 
-type PhotoResult = { tid: number; photo: RecordPhoto | null };
+type RecordPhotoResponse = RecordPhoto & { alternates?: RecordPhoto[] };
+type PhotoCandidate = { photo: RecordPhoto; src: string };
+type PhotoResult = { tid: number; candidates: PhotoCandidate[] };
 
 type RecordCountResult = { tid: number; count: number };
 type CachedRecordCount = { count: number; expiresAt: number };
@@ -83,13 +86,9 @@ export function configureTaxonomyExplorer(colApiUrl: string) {
   configure({ dataApi: new URL(colApiUrl, window.location.href).href });
 }
 
-function taxonLink(tid?: string) {
+function taxonLink(tid: string) {
   const url = new URL(window.location.href);
-  if (tid) {
-    url.searchParams.set('tid', tid);
-  } else {
-    url.searchParams.delete('tid');
-  }
+  url.searchParams.set('tid', tid);
   return url.href;
 }
 
@@ -113,7 +112,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
   const [activeTid, setActiveTid] = useState(selectedTaxon);
   const [revealInTree, setRevealInTree] = useState(true);
-  const [expandedTid, setExpandedTid] = useState<string>();
   const [treeVisit, setTreeVisit] = useState(0);
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
@@ -122,14 +120,16 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const treeSection = useRef<HTMLElement>(null);
   const expandedKeys = useRef(new Set<string>());
   const pendingKeys = useRef<Set<string> | null>(null);
-  const restoringExpansion = useRef(false);
+  const restoringExpansion = useRef<string | null>(null);
+  const treeInteraction = useRef(false);
   const recordCountCache = useRef(new Map<number, CachedRecordCount>());
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
   const error = publicResult && 'error' in publicResult ? publicResult.error : null;
   const detailTid = selected?.tid;
-  const photo = photoResult?.tid === detailTid ? photoResult?.photo : null;
+  const photoCandidate = photoResult?.tid === detailTid ? photoResult?.candidates[0] : null;
+  const photo = photoCandidate?.photo;
   const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
 
   const rememberExpansion = useCallback(() => {
@@ -151,7 +151,9 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     pendingKeys.current = pending;
     if (!section || !pending.size) return undefined;
 
+    const attempts = new Map<string, number>();
     let frame = 0;
+    let retryTimer = 0;
 
     function restoreNext() {
       frame = 0;
@@ -162,11 +164,25 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         if (expanded) {
           pending.delete(key);
         } else {
-          restoringExpansion.current = true;
+          const attempt = (attempts.get(key) ?? 0) + 1;
+          if (attempt > 3) {
+            pending.delete(key);
+            continue;
+          }
+          if (retryTimer) return;
+          attempts.set(key, attempt);
+          restoringExpansion.current = key;
           try {
             switcher.click();
           } finally {
-            restoringExpansion.current = false;
+            restoringExpansion.current = null;
+          }
+          // Ant can ignore clicks while it is finishing the previous branch transition.
+          if (pending.has(key)) {
+            retryTimer = window.setTimeout(() => {
+              retryTimer = 0;
+              scheduleRestore();
+            }, 100);
           }
           return;
         }
@@ -188,6 +204,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     return () => {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(retryTimer);
     };
   }, [expansionPlan, treeVisit]);
 
@@ -198,7 +215,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
   const resetTree = useCallback(() => {
     setExpansionPlan([]);
-    setExpandedTid(undefined);
     setTreeVisit((visit) => visit + 1);
   }, []);
 
@@ -209,17 +225,18 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       const filterChanged = nextRecordsOnly !== recordsOnly;
       if (filterChanged) {
         rememberExpansion();
-        setExpandedTid(undefined);
+        setRecordsOnly(nextRecordsOnly);
       }
-      setRecordsOnly(nextRecordsOnly);
-      setActiveTid(tid);
-      setRevealInTree(!filterChanged);
-      if (!tid && !filterChanged) resetTree();
+      if (tid !== activeTid) {
+        setActiveTid(tid);
+        setRevealInTree(!filterChanged);
+        if (!tid && !filterChanged) resetTree();
+      }
     }
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [recordsOnly, rememberExpansion, resetTree]);
+  }, [activeTid, recordsOnly, rememberExpansion, resetTree]);
 
   useEffect(() => {
     if (!activeTid || !apiUrl) return undefined;
@@ -279,8 +296,18 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       }
     }
 
-    loadRecordData<RecordPhoto | null>('taxon-photo', (newPhoto) => {
-      setPhotoResult({ tid, photo: newPhoto });
+    loadRecordData<RecordPhotoResponse | null>('taxon-photo', (entry) => {
+      const photos = entry ? [entry, ...(entry.alternates ?? [])] : [];
+      const seen = new Set<string>();
+      const candidates = photos.flatMap((photo) => {
+        const urls = [photo.thumbnailUrl, photo.url, photo.originalUrl];
+        return urls.flatMap((src) => {
+          if (!src || seen.has(src)) return [];
+          seen.add(src);
+          return [{ photo, src }];
+        });
+      });
+      setPhotoResult({ tid, candidates });
     });
     const cached = recordCountCache.current.get(tid);
     if (cached && cached.expiresAt > Date.now()) {
@@ -298,7 +325,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
   const changeRecordsFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
-    const url = new URL(taxonLink());
+    const url = new URL(window.location.href);
     if (checked) {
       url.searchParams.set('records', '1');
     } else {
@@ -307,21 +334,15 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     window.history.pushState(null, '', url.href);
     rememberExpansion();
     setRecordsOnly(checked);
-    setActiveTid(undefined);
-    setExpandedTid(undefined);
-    setResult(null);
   }, [rememberExpansion]);
 
-  const handlePhotoError = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
-    if (!photo) return;
-    const image = event.currentTarget;
-    const fullUrl = new URL(photo.url, window.location.href).href;
-    if (image.src !== fullUrl) {
-      image.src = fullUrl;
-    } else {
-      setPhotoResult(null);
-    }
-  }, [photo]);
+  const handlePhotoError = useCallback(() => {
+    setPhotoResult((current) => (
+      current && current === photoResult
+        ? { tid: current.tid, candidates: current.candidates.slice(1) }
+        : current
+    ));
+  }, [photoResult]);
 
   const openTaxon = useCallback((tid: string, reveal = false) => {
     if (!/^[1-9]\d*$/.test(tid)) return;
@@ -330,16 +351,30 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       setResult(null);
       setActiveTid(tid);
       setRevealInTree(reveal);
-    } else if (reveal && selected) {
-      revealLineage(selected);
+    } else if (reveal) {
+      if (selected) revealLineage(selected);
+      else setRevealInTree(true);
     }
   }, [activeTid, revealLineage, selected]);
 
-  const revealTaxon = useCallback((tid: string | null) => {
-    if (restoringExpansion.current) return;
-    setExpandedTid(tid ?? undefined);
-    if (tid) openTaxon(tid);
+  const handleTreeSelection = useCallback((tid: string | null) => {
+    if (!tid) return;
+    if (restoringExpansion.current === tid) {
+      pendingKeys.current?.delete(tid);
+      return;
+    }
+    // CoL calls this for both tree expansion and autocomplete selection.
+    const fromSearch = !treeInteraction.current;
+    if (fromSearch) setExpansionPlan([]);
+    openTaxon(tid, fromSearch);
   }, [openTaxon]);
+
+  const markTreeInteraction = useCallback((
+    event: KeyboardEvent<HTMLElement> | MouseEvent<HTMLElement>,
+  ) => {
+    const { target } = event;
+    treeInteraction.current = target instanceof Element && !!target.closest('[role="tree"]');
+  }, []);
 
   const taxonProfileLink = useCallback((tid: string) => {
     const api = new URL(apiUrl, window.location.href);
@@ -349,6 +384,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   }, [apiUrl]);
 
   const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
+    markTreeInteraction(event);
     const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
     if (event.button !== 0 || modified) return;
     if (!(event.target instanceof Element)) return;
@@ -363,7 +399,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     if (!tid || url.href !== taxonProfileLink(tid)) return;
     event.preventDefault();
     openTaxon(tid);
-  }, [openTaxon, taxonProfileLink]);
+  }, [markTreeInteraction, openTaxon, taxonProfileLink]);
 
   function followTaxonLink(event: MouseEvent<HTMLAnchorElement>, tid: string) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -403,6 +439,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         ref={treeSection}
         aria-label="Taxonomy tree"
         onClickCapture={selectTreeRow}
+        onKeyDownCapture={markTreeInteraction}
         sx={{
           ...branchAnimation,
           minWidth: 0,
@@ -429,8 +466,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           datasetKey={recordsOnly ? 2 : 1}
           autoFocus={false}
           insertPlaceholder={false}
-          defaultTaxonKey={expandedTid}
-          onExpandedTaxonKeyChange={revealTaxon}
+          onExpandedTaxonKeyChange={handleTreeSelection}
           hrefForTaxon={taxonProfileLink}
         />
       </Box>
@@ -518,12 +554,13 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   </Button>
                 </Stack>
               </Box>
-              {photo && (
+              {photo && photoCandidate && (
                 <Box component="figure" sx={{ ...detailSectionStyle, m: 0 }}>
                   <Link href={photo.recordUrl} sx={{ display: 'block' }}>
                     <Box
                       component="img"
-                      src={photo.thumbnailUrl || photo.url}
+                      key={photoCandidate.src}
+                      src={photoCandidate.src}
                       alt={photo.caption || 'Photo from a specimen record'}
                       onError={handlePhotoError}
                       sx={{
