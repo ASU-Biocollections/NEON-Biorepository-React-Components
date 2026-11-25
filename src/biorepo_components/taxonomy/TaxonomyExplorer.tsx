@@ -47,9 +47,11 @@ type PhotoResult = { tid: number; candidates: PhotoCandidate[] };
 
 type RecordCountResult = { tid: number; count: number };
 type CachedRecordCount = { count: number; expiresAt: number };
+type RevealMode = false | 'lineage' | 'keep-open';
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
+const nameStatusSelector = '.neon-taxonomy-name-status';
 const recordCountTtlMs = 60_000;
 const descendantRowSelector = '[role="treeitem"]:has(.ant-tree-indent-unit)';
 const caretSelector = '.catalogue-of-life .ant-tree .ant-tree-switcher-icon svg';
@@ -101,6 +103,10 @@ function recordsOnlyFromLocation() {
   return new URLSearchParams(window.location.search).get('records') === '1';
 }
 
+function acceptedOnlyFromLocation() {
+  return new URLSearchParams(window.location.search).get('accepted') === '1';
+}
+
 function recordsListLink(apiUrl: string, taxon: TaxonDetail) {
   const url = new URL('../../collections/list.php', new URL(apiUrl, window.location.href));
   url.searchParams.set('db', 'all,all-others');
@@ -110,8 +116,10 @@ function recordsListLink(apiUrl: string, taxon: TaxonDetail) {
 
 export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
+  const [acceptedOnly, setAcceptedOnly] = useState(acceptedOnlyFromLocation);
   const [activeTid, setActiveTid] = useState(selectedTaxon);
-  const [revealInTree, setRevealInTree] = useState(true);
+  const [revealInTree, setRevealInTree] = useState<RevealMode>('lineage');
+  const [checkRecordedTid, setCheckRecordedTid] = useState<string>();
   const [treeVisit, setTreeVisit] = useState(0);
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
@@ -131,6 +139,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const photoCandidate = photoResult?.tid === detailTid ? photoResult?.candidates[0] : null;
   const photo = photoCandidate?.photo;
   const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
+  const datasetKey = (acceptedOnly ? 1 : 3) + Number(recordsOnly);
 
   const rememberExpansion = useCallback(() => {
     if (!treeSection.current) return;
@@ -208,9 +217,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     };
   }, [expansionPlan, treeVisit]);
 
-  const revealLineage = useCallback((taxon: TaxonDetail) => {
+  const revealLineage = useCallback((taxon: TaxonDetail, keepOpen = false) => {
     // The ancestors open the path without expanding the selected taxon itself.
-    setExpansionPlan(taxon.classification?.map(({ tid }) => String(tid)) ?? []);
+    const lineage = taxon.classification?.map(({ tid }) => String(tid)) ?? [];
+    setExpansionPlan((open) => (keepOpen ? [...new Set([...open, ...lineage])] : lineage));
   }, []);
 
   const resetTree = useCallback(() => {
@@ -221,22 +231,25 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   useEffect(() => {
     function onPopState() {
       const tid = selectedTaxon();
+      setCheckRecordedTid(undefined);
       const nextRecordsOnly = recordsOnlyFromLocation();
-      const filterChanged = nextRecordsOnly !== recordsOnly;
+      const nextAcceptedOnly = acceptedOnlyFromLocation();
+      const filterChanged = nextRecordsOnly !== recordsOnly || nextAcceptedOnly !== acceptedOnly;
       if (filterChanged) {
         rememberExpansion();
         setRecordsOnly(nextRecordsOnly);
+        setAcceptedOnly(nextAcceptedOnly);
       }
       if (tid !== activeTid) {
         setActiveTid(tid);
-        setRevealInTree(!filterChanged);
+        setRevealInTree(filterChanged ? false : 'lineage');
         if (!tid && !filterChanged) resetTree();
       }
     }
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [activeTid, recordsOnly, rememberExpansion, resetTree]);
+  }, [acceptedOnly, activeTid, recordsOnly, rememberExpansion, resetTree]);
 
   useEffect(() => {
     if (!activeTid || !apiUrl) return undefined;
@@ -260,7 +273,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         if (controller.signal.aborted) return;
         setResult({ tid, taxon: body.data });
         if (revealInTree) {
-          revealLineage(body.data);
+          revealLineage(body.data, revealInTree === 'keep-open');
         }
       } catch (reason) {
         if (!controller.signal.aborted) {
@@ -273,6 +286,44 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     loadTaxon();
     return () => controller.abort();
   }, [activeTid, apiUrl, revealInTree, revealLineage]);
+
+  useEffect(() => {
+    if (!apiUrl || !recordsOnly || !checkRecordedTid || checkRecordedTid !== activeTid) {
+      return undefined;
+    }
+    const controller = new AbortController();
+    const path = `col-api.php/dataset/2/tree/${checkRecordedTid}/recorded-ancestor`;
+    const url = new URL(path, new URL(apiUrl, window.location.href));
+
+    async function findRecordedAncestor() {
+      try {
+        const response = await fetch(url, {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const { tid }: { tid?: number | null } = await response.json();
+        if (controller.signal.aborted || selectedTaxon() !== checkRecordedTid
+          || !recordsOnlyFromLocation() || tid === undefined || String(tid) === checkRecordedTid) {
+          return;
+        }
+        const destination = new URL(window.location.href);
+        if (tid === null) destination.searchParams.delete('tid');
+        else destination.searchParams.set('tid', String(tid));
+        window.history.replaceState(null, '', destination.href);
+        setResult(null);
+        setRevealInTree(tid === null ? false : 'keep-open');
+        setActiveTid(tid === null ? undefined : String(tid));
+      } catch {
+        // The tree can still be browsed if the recorded-ancestor lookup fails.
+      } finally {
+        if (!controller.signal.aborted) setCheckRecordedTid(undefined);
+      }
+    }
+
+    findRecordedAncestor();
+    return () => controller.abort();
+  }, [activeTid, apiUrl, checkRecordedTid, recordsOnly]);
 
   useEffect(() => {
     if (!apiUrl || !activeTid) return undefined;
@@ -323,18 +374,23 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     return () => controller.abort();
   }, [apiUrl, activeTid]);
 
-  const changeRecordsFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const { checked } = event.target;
+  const changeTreeFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const { name, checked } = event.target;
     const url = new URL(window.location.href);
     if (checked) {
-      url.searchParams.set('records', '1');
+      url.searchParams.set(name, '1');
     } else {
-      url.searchParams.delete('records');
+      url.searchParams.delete(name);
     }
     window.history.pushState(null, '', url.href);
     rememberExpansion();
-    setRecordsOnly(checked);
-  }, [rememberExpansion]);
+    if (name === 'accepted') {
+      setAcceptedOnly(checked);
+    } else {
+      setRecordsOnly(checked);
+      setCheckRecordedTid(checked ? activeTid : undefined);
+    }
+  }, [activeTid, rememberExpansion]);
 
   const handlePhotoError = useCallback(() => {
     setPhotoResult((current) => (
@@ -350,10 +406,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       window.history.pushState(null, '', taxonLink(tid));
       setResult(null);
       setActiveTid(tid);
-      setRevealInTree(reveal);
+      setRevealInTree(reveal ? 'lineage' : false);
     } else if (reveal) {
       if (selected) revealLineage(selected);
-      else setRevealInTree(true);
+      else setRevealInTree('lineage');
     }
   }, [activeTid, revealLineage, selected]);
 
@@ -391,7 +447,9 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     const { target } = event;
     const row = target.closest('[role="treeitem"]');
     if (!row || target.closest('.ant-tree-switcher, button, [role="button"]')) return;
-    if (target.closest('a[href]') && !target.closest(speciesCountSelector)) return;
+    if (target.closest('a[href]') && !target.closest(
+      `${speciesCountSelector}, ${nameStatusSelector}`,
+    )) return;
     const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
     if (!link) return;
     const url = new URL(link.href);
@@ -446,24 +504,40 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           overflowX: 'auto',
           '& .ant-tree-node-content-wrapper': { cursor: 'pointer' },
           [`& ${speciesCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
+          [`& ${nameStatusSelector}`]: { color: 'text.secondary', whiteSpace: 'nowrap' },
         }}
       >
-        <FormControlLabel
-          label="Only taxa with records"
-          control={(
-            <Switch
-              color="primary"
-              size="medium"
-              checked={recordsOnly}
-              onChange={changeRecordsFilter}
-              slotProps={{ input: { role: 'switch' } }}
-            />
-          )}
-          sx={{ mb: 1 }}
-        />
+        <Stack direction="row" sx={{ flexWrap: 'wrap', columnGap: 2, mb: 1 }}>
+          <FormControlLabel
+            label="Accepted names only"
+            control={(
+              <Switch
+                name="accepted"
+                color="primary"
+                size="medium"
+                checked={acceptedOnly}
+                onChange={changeTreeFilter}
+                slotProps={{ input: { role: 'switch' } }}
+              />
+            )}
+          />
+          <FormControlLabel
+            label="Only taxa with records"
+            control={(
+              <Switch
+                name="records"
+                color="primary"
+                size="medium"
+                checked={recordsOnly}
+                onChange={changeTreeFilter}
+                slotProps={{ input: { role: 'switch' } }}
+              />
+            )}
+          />
+        </Stack>
         <Tree
-          key={`${recordsOnly}-${treeVisit}`}
-          datasetKey={recordsOnly ? 2 : 1}
+          key={`${datasetKey}-${treeVisit}`}
+          datasetKey={datasetKey}
           autoFocus={false}
           insertPlaceholder={false}
           onExpandedTaxonKeyChange={handleTreeSelection}
