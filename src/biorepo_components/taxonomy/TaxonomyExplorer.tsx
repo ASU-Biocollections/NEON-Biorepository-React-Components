@@ -41,6 +41,9 @@ interface RecordPhoto {
 
 type PhotoResult = { tid: number; photo: RecordPhoto | null };
 
+type RecordSearch = { count: number; url: string };
+type RecordSearchResult = { tid: number; search: RecordSearch };
+
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const speciesCountSelector = '.neon-taxonomy-species-count';
 
@@ -75,12 +78,14 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [treeVisit, setTreeVisit] = useState(0);
   const [result, setResult] = useState<TaxonResult | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
+  const [recordResult, setRecordResult] = useState<RecordSearchResult | null>(null);
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
   const error = publicResult && 'error' in publicResult ? publicResult.error : null;
-  const photoTid = selected?.tid;
-  const photo = photoResult?.tid === photoTid ? photoResult?.photo : null;
+  const detailTid = selected?.tid;
+  const photo = photoResult?.tid === detailTid ? photoResult?.photo : null;
+  const recordSearch = recordResult?.tid === detailTid ? recordResult?.search : null;
 
   const expandToTaxon = useCallback((tid: string | undefined) => {
     setExpandedTid(tid);
@@ -138,30 +143,33 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   }, [activeTid, apiUrl, expandToTaxon, revealInTree]);
 
   useEffect(() => {
-    if (!apiUrl || !photoTid) return undefined;
-    const tid = photoTid;
+    if (!apiUrl || !detailTid) return undefined;
+    const tid = detailTid;
     const controller = new AbortController();
-    const url = new URL(apiUrl, window.location.href);
-    url.searchParams.set('action', 'taxon-photo');
-    url.searchParams.set('tid', String(tid));
 
-    async function loadPhoto() {
+    async function loadRecordData<T>(action: string, onLoad: (data: T) => void) {
+      const url = new URL(apiUrl, window.location.href);
+      url.searchParams.set('action', action);
+      url.searchParams.set('tid', String(tid));
       try {
         const response = await fetch(url, {
           headers: { Accept: 'application/json' },
           signal: controller.signal,
         });
         if (!response.ok) return;
-        const { data }: { data?: RecordPhoto | null } = await response.json();
-        if (!controller.signal.aborted) setPhotoResult({ tid, photo: data ?? null });
+        const { data }: { data?: T } = await response.json();
+        if (!controller.signal.aborted && data !== undefined) onLoad(data);
       } catch {
-        // The details card can be read even if its optional photo request fails.
+        // Record data loads independently of the taxon details.
       }
     }
 
-    loadPhoto();
+    loadRecordData<RecordPhoto | null>('taxon-photo', (newPhoto) => {
+      setPhotoResult({ tid, photo: newPhoto });
+    });
+    loadRecordData<RecordSearch>('taxon-records', (search) => setRecordResult({ tid, search }));
     return () => controller.abort();
-  }, [apiUrl, photoTid]);
+  }, [apiUrl, detailTid]);
 
   const changeRecordsFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
@@ -358,17 +366,29 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     )}
                   </Stack>
                 )}
-                <Button
-                  href={taxonProfileLink(String(selected.tid))}
-                  variant="contained"
-                  color="primary"
-                  size="medium"
-                  fullWidth
-                  endIcon={<ChevronRight />}
-                  sx={{ mt: 2 }}
-                >
-                  View Taxon Profile
-                </Button>
+                <Stack spacing={1} sx={{ mt: 2 }}>
+                  <Button
+                    href={taxonProfileLink(String(selected.tid))}
+                    variant="contained"
+                    size="medium"
+                    fullWidth
+                    endIcon={<ChevronRight />}
+                  >
+                    View Taxon Profile
+                  </Button>
+                  {recordSearch && (
+                    <Button
+                      href={recordSearch.url}
+                      variant="contained"
+                      size="medium"
+                      fullWidth
+                      endIcon={<ChevronRight />}
+                    >
+                      {`Browse ${recordSearch.count.toLocaleString()} `}
+                      {recordSearch.count === 1 ? 'Record' : 'Records'}
+                    </Button>
+                  )}
+                </Stack>
               </Box>
               {photo && (
                 <Box component="figure" sx={{ ...detailSectionStyle, m: 0 }}>
