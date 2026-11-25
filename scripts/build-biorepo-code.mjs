@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const fs = require('fs-extra');
 const path = require('path');
+const ts = require('typescript');
 
 const sourceDir = '/usr/src/NEON-Biorepository-React-Components/build';
 const targetDir = '/mnt/c/xampp/htdocs/portal/neon-react/core-components';
@@ -92,27 +93,53 @@ function getChunkPath(src) {
     return match[0];
 }
 
-// Find the last JS script before the Drupal CSS preload.
-function getLastHeadChunk(head) {
-    const drupalLink = /<link\b[^>]*rel=["']preload["'][^>]*href=["'][^"']*drupal-theme[^"']*["'][^>]*>/i;
-    const match = drupalLink.exec(head);
+// Find the PHP portal entry in the factories registered by this build.
+function getPortalModuleIds(chunkName, source) {
+    const marker = 'biorepo-client-bootstrap';
+    if (!source.includes(marker)) return [];
 
-    if (!match) {
-        throw new Error('Could not find the Drupal CSS preload in <head>.');
+    const chunk = ts.createSourceFile(chunkName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.JS);
+    const ids = [];
+
+    for (const statement of chunk.statements) {
+        if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) continue;
+        const call = statement.expression;
+        const [registration] = call.arguments;
+        if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== 'push'
+            || !registration || !ts.isArrayLiteralExpression(registration)) continue;
+
+        // The chunk reference is followed by one or more module IDs and their factory.
+        let moduleIds = [];
+        for (const entry of registration.elements.slice(1)) {
+            if (ts.isNumericLiteral(entry) || ts.isStringLiteral(entry)) {
+                moduleIds.push(ts.isNumericLiteral(entry) ? Number(entry.text) : entry.text);
+                continue;
+            }
+            if ((ts.isArrowFunction(entry) || ts.isFunctionExpression(entry)) && entry.getText(chunk).includes(marker)) {
+                ids.push(...moduleIds);
+            }
+            moduleIds = [];
+        }
     }
+    return ids;
+}
 
-    const beforeDrupal = head.slice(0, match.index);
-    const scripts = [...beforeDrupal.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)];
+async function getPortalEntry(head, bodyChunk) {
+    const scripts = [...head.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)];
+    const chunks = new Set(scripts.map(script => script[1])
+        .filter(src => /\/_next\/static\/chunks\/[^"'?\s]+\.js/i.test(src))
+        .map(getChunkPath));
+    chunks.add(bodyChunk);
 
-    const chunkScripts = scripts
-        .map(script => script[1])
-        .filter(src => /\/_next\/static\/chunks\/[^"'?\s]+\.js/i.test(src));
-
-    if (!chunkScripts.length) {
-        throw new Error('Could not find a React JS chunk before Drupal CSS.');
+    const matches = [];
+    for (const chunk of chunks) {
+        const source = await fs.readFile(path.join(sourceDir, '_next', chunk), 'utf8');
+        for (const id of getPortalModuleIds(chunk, source)) matches.push({ chunk, id });
     }
-
-    return getChunkPath(chunkScripts[chunkScripts.length - 1]);
+    if (matches.length !== 1) {
+        throw new Error(`Expected one Biorepo portal entry in the generated chunks, found ${matches.length}.`);
+    }
+    return matches[0];
 }
 
 // Replace the managed React asset section.
@@ -129,18 +156,28 @@ function replaceManagedSection(php, content) {
         php.slice(end + END.length);
 }
 
-// Update the two Turbopack otherChunks references.
-function updateTurbopackChunks(php, bodyChunk, headChunk) {
-    const pattern = /otherChunks\s*:\s*\[[\s\S]*?\]/;
+// Keep the PHP bootstrap's dependency chunks and module ID on the same build.
+function updateTurbopackBootstrap(php, bodyChunk, portalEntry) {
+    const scripts = /<script\b[^>]*>[\s\S]*?<\/script>/gi;
+    const otherChunks = /otherChunks\s*:\s*\[[^\]]*\]/;
+    const runtimeModuleIds = /runtimeModuleIds\s*:\s*\[[^\]]*\]/;
+    const dependencies = [...new Set([bodyChunk, portalEntry.chunk])];
+    let found = 0;
 
-    if (!pattern.test(php)) {
-        throw new Error('Could not find otherChunks in react_head.php.');
+    const updated = php.replace(scripts, script => {
+        if (!script.includes('php-bootstrap.js')) return script;
+        found++;
+        if (!otherChunks.test(script) || !runtimeModuleIds.test(script)) {
+            throw new Error('PHP Turbopack bootstrap is missing its chunk or module references.');
+        }
+        return script
+            .replace(otherChunks, `otherChunks: ${JSON.stringify(dependencies)}`)
+            .replace(runtimeModuleIds, `runtimeModuleIds: ${JSON.stringify([portalEntry.id])}`);
+    });
+    if (found !== 1) {
+        throw new Error(`Expected one Turbopack bootstrap in react_head.php, found ${found}.`);
     }
-
-    return php.replace(pattern, `otherChunks: [
-      '${bodyChunk}', // script in body
-      '${headChunk}' // last script before Drupal CSS
-    ]`);
+    return updated;
 }
 
 // Update the footer React script's src using its _R_ ID.
@@ -182,17 +219,17 @@ async function main() {
     const originalHead = await fs.readFile(reactHeadPath, 'utf8');
     const originalFooter = await fs.readFile(footerPath, 'utf8');
 
-    // Extract generated assets and current chunk filenames.
+    // Extract the generated assets and identify the portal runtime module.
     const headContent = removeSecondHeadChunk(extractHead(indexHtml));
     const bodyChunk = getBodyChunk(indexHtml);
-    const headChunk = getLastHeadChunk(headContent);
 
     if (!headContent.includes('/_next/static/')) {
         throw new Error('No generated Next.js assets found in <head>.');
     }
 
+    const portalEntry = await getPortalEntry(headContent, bodyChunk);
     console.log(`Body chunk: ${bodyChunk}`);
-    console.log(`Last head chunk: ${headChunk}`);
+    console.log(`Portal runtime module ${portalEntry.id}: ${portalEntry.chunk}`);
 
     // Prepare updated React assets.
     const updatedAt = new Date().toLocaleString();
@@ -210,10 +247,10 @@ async function main() {
         generatedContent
     );
 
-    updatedHead = updateTurbopackChunks(
+    updatedHead = updateTurbopackBootstrap(
         updatedHead,
         bodyChunk,
-        headChunk
+        portalEntry
     );
 
     // Update footer script.
