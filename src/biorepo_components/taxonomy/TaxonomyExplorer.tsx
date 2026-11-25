@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import {
-  Alert, Box, CircularProgress, Link, Stack, Typography,
+  Alert, Box, Chip, CircularProgress, Divider, Link, Paper, Stack, Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { configure } from 'col-browser/config';
 import { Tree } from 'col-browser/tree';
 import 'col-browser/style.css';
@@ -27,6 +28,9 @@ interface TaxonDetail extends Taxon {
 }
 
 type TaxonResult = { tid: string; taxon: TaxonDetail } | { tid: string; error: string };
+
+const detailSectionStyle = { px: 2.5, py: 1.75 };
+const speciesCountSelector = '.neon-taxonomy-species-count';
 
 export function configureTaxonomyExplorer(colApiUrl: string) {
   configure({ dataApi: new URL(colApiUrl, window.location.href).href });
@@ -129,10 +133,48 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     if (tid) openTaxon(tid);
   }, [openTaxon]);
 
+  const taxonProfileLink = useCallback((tid: string) => {
+    const api = new URL(apiUrl, window.location.href);
+    const url = new URL('../../taxa/index.php', api);
+    url.searchParams.set('tid', tid);
+    return url.href;
+  }, [apiUrl]);
+
+  const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
+    const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+    if (event.button !== 0 || modified) return;
+    if (!(event.target instanceof Element)) return;
+    const { target } = event;
+    const row = target.closest('[role="treeitem"]');
+    if (!row || target.closest('.ant-tree-switcher, button, [role="button"]')) return;
+    if (target.closest('a[href]') && !target.closest(speciesCountSelector)) return;
+    const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
+    if (!link) return;
+    const url = new URL(link.href);
+    const tid = url.searchParams.get('tid');
+    if (!tid || url.href !== taxonProfileLink(tid)) return;
+    event.preventDefault();
+    openTaxon(tid);
+  }, [openTaxon, taxonProfileLink]);
+
   function followTaxonLink(event: MouseEvent<HTMLAnchorElement>, tid: string) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     openTaxon(tid, true);
+  }
+
+  function detailLink(taxon: Taxon) {
+    const tid = String(taxon.tid);
+    return (
+      <Link
+        href={taxonLink(tid)}
+        onClick={(event) => followTaxonLink(event, tid)}
+        underline="hover"
+        sx={{ overflowWrap: 'anywhere' }}
+      >
+        {taxon.name}
+      </Link>
+    );
   }
 
   if (!apiUrl) {
@@ -143,11 +185,22 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   return (
     <Box sx={{
       display: 'grid',
-      gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 3fr) minmax(16rem, 2fr)' },
+      gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) minmax(16rem, 22rem)' },
+      alignItems: 'start',
       gap: 3,
     }}
     >
-      <Box component="section" aria-label="Taxonomy tree" sx={{ minWidth: 0, overflowX: 'auto' }}>
+      <Box
+        component="section"
+        aria-label="Taxonomy tree"
+        onClickCapture={selectTreeRow}
+        sx={{
+          minWidth: 0,
+          overflowX: 'auto',
+          '& .ant-tree-node-content-wrapper': { cursor: 'pointer' },
+          [`& ${speciesCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
+        }}
+      >
         <Tree
           key={treeVisit}
           datasetKey={1}
@@ -155,76 +208,143 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           insertPlaceholder={false}
           defaultTaxonKey={expandedTid}
           onExpandedTaxonKeyChange={revealTaxon}
-          hrefForTaxon={taxonLink}
-          onNavigateToTaxon={openTaxon}
+          hrefForTaxon={taxonProfileLink}
         />
       </Box>
-      <Stack component="section" aria-label="Taxon details" spacing={1.5} sx={{ minWidth: 0 }}>
-        {activeTid && error && <Alert severity="error">{error}</Alert>}
-        {activeTid && !error && !selected && (
-          <CircularProgress size={20} aria-label="Loading taxon details" />
-        )}
-        {selected && (
-          <>
-            <Typography variant="h5" component="h2">{selected.name}</Typography>
-            {selected.author && <Typography>{selected.author}</Typography>}
-            <Typography>{[selected.rank, selected.status].filter(Boolean).join(' · ')}</Typography>
-            {selected.source && (
-              <Typography>
-                Source
-                {' '}
-                {selected.source}
-              </Typography>
-            )}
-            {acceptedTaxon && (
-              <Typography>
-                Accepted name
-                {' '}
-                <Link
-                  href={taxonLink(String(acceptedTaxon.tid))}
-                  onClick={(event) => followTaxonLink(event, String(acceptedTaxon.tid))}
+      {activeTid && (
+        <Paper
+          component="section"
+          aria-label="Taxon details"
+          aria-busy={!error && !selected}
+          variant="outlined"
+          sx={{ borderRadius: 2, minWidth: 0, overflow: 'hidden' }}
+        >
+          {error && <Alert severity="error">{error}</Alert>}
+          {!error && !selected && (
+            <Box sx={detailSectionStyle}>
+              <CircularProgress size={20} aria-label="Loading taxon details" />
+            </Box>
+          )}
+          {selected && (
+            <Stack divider={<Divider flexItem />}>
+              <Box sx={{
+                ...detailSectionStyle,
+                py: 2,
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.05),
+              }}
+              >
+                <Typography
+                  variant="h5"
+                  component="h2"
+                  sx={{ fontWeight: 600, overflowWrap: 'anywhere' }}
                 >
-                  {acceptedTaxon.name}
-                </Link>
-              </Typography>
-            )}
-            {!!selected.classification?.length && (
-              <Box component="nav" aria-label="Taxon classification">
-                <Typography variant="subtitle2" component="h3">Classification</Typography>
-                <Box component="ol" sx={{ pl: 3 }}>
-                  {selected.classification.map((ancestor) => (
-                    <li key={ancestor.tid}>
-                      <Link
-                        href={taxonLink(String(ancestor.tid))}
-                        onClick={(event) => followTaxonLink(event, String(ancestor.tid))}
+                  {selected.name}
+                </Typography>
+                {selected.author && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {selected.author}
+                  </Typography>
+                )}
+                {(selected.rank || selected.status) && (
+                  <Stack
+                    direction="row"
+                    sx={{
+                      mt: 1.25, alignItems: 'center', gap: 1, flexWrap: 'wrap',
+                    }}
+                  >
+                    {selected.rank && (
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ textTransform: 'capitalize' }}
                       >
-                        {ancestor.name}
-                      </Link>
-                    </li>
-                  ))}
-                </Box>
+                        {selected.rank}
+                      </Typography>
+                    )}
+                    {selected.status && (
+                      <Chip
+                        label={selected.status}
+                        color={selected.status === 'accepted' ? 'success' : 'default'}
+                        variant="outlined"
+                        size="small"
+                        sx={{ textTransform: 'capitalize' }}
+                      />
+                    )}
+                  </Stack>
+                )}
               </Box>
-            )}
-            {!!selected.synonyms?.length && (
-              <Box>
-                <Typography variant="subtitle2" component="h3">Synonyms</Typography>
-                <Box component="ul" sx={{ pl: 3 }}>
-                  {selected.synonyms.map((synonym) => (
-                    <li key={synonym.tid}>
-                      <Link
-                        href={taxonLink(String(synonym.tid))}
-                        onClick={(event) => followTaxonLink(event, String(synonym.tid))}
+              {acceptedTaxon && (
+                <Box sx={detailSectionStyle}>
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>
+                    Accepted name
+                  </Typography>
+                  <Typography variant="body2">{detailLink(acceptedTaxon)}</Typography>
+                </Box>
+              )}
+              {!!selected.classification?.length && (
+                <Box component="nav" aria-label="Taxon classification" sx={detailSectionStyle}>
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
+                    Classification
+                  </Typography>
+                  <Stack
+                    component="ol"
+                    spacing={0.65}
+                    sx={{
+                      listStyle: 'none', m: 0, pl: 1.5, borderLeft: 2, borderColor: 'divider',
+                    }}
+                  >
+                    {selected.classification.map((ancestor) => (
+                      <Stack
+                        key={ancestor.tid}
+                        component="li"
+                        direction="row"
+                        sx={{ alignItems: 'baseline', gap: 1 }}
                       >
-                        {synonym.name}
-                      </Link>
-                    </li>
-                  ))}
+                        <Typography variant="body2" component="span">
+                          {detailLink(ancestor)}
+                        </Typography>
+                        {ancestor.rank && (
+                          <Typography variant="caption" color="text.secondary">
+                            {ancestor.rank}
+                          </Typography>
+                        )}
+                      </Stack>
+                    ))}
+                  </Stack>
                 </Box>
-              </Box>
-            )}
-          </>
-        )}
-      </Stack>
+              )}
+              {!!selected.synonyms?.length && (
+                <Box sx={detailSectionStyle}>
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
+                    Synonyms
+                  </Typography>
+                  <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
+                    {selected.synonyms.map((synonym) => (
+                      <Typography component="li" variant="body2" key={synonym.tid}>
+                        {detailLink(synonym)}
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+              {selected.source && (
+                <Box sx={detailSectionStyle}>
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>
+                    Source
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ overflowWrap: 'anywhere' }}
+                  >
+                    {selected.source}
+                  </Typography>
+                </Box>
+              )}
+            </Stack>
+          )}
+        </Paper>
+      )}
     </Box>
   );
 }
