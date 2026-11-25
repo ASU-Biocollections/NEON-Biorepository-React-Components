@@ -36,9 +36,7 @@ interface RecordPhoto {
   url: string;
   thumbnailUrl: string | null;
   originalUrl?: string | null;
-  recordUrl: string;
   caption: string | null;
-  credit: string | null;
 }
 
 type RecordPhotoResponse = RecordPhoto & { alternates?: RecordPhoto[] };
@@ -630,32 +628,23 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
               </Box>
               {photo && photoCandidate && (
                 <Box component="figure" sx={{ ...detailSectionStyle, m: 0 }}>
-                  <Link href={photo.recordUrl} sx={{ display: 'block' }}>
-                    <Box
-                      component="img"
-                      key={photoCandidate.src}
-                      src={photoCandidate.src}
-                      alt={photo.caption || 'Photo from a specimen record'}
-                      onError={handlePhotoError}
-                      sx={{
-                        display: 'block',
-                        width: '100%',
-                        maxHeight: 224,
-                        objectFit: 'contain',
-                        borderRadius: 1,
-                      }}
-                    />
-                  </Link>
-                  {(photo.caption || photo.credit) && (
-                    <Box component="figcaption" sx={{ mt: 1 }}>
-                      {photo.caption && <Typography variant="body2">{photo.caption}</Typography>}
-                      {photo.credit && (
-                        <Typography variant="caption" color="text.secondary">
-                          {photo.credit}
-                        </Typography>
-                      )}
-                    </Box>
-                  )}
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
+                    Image
+                  </Typography>
+                  <Box
+                    component="img"
+                    key={photoCandidate.src}
+                    src={photoCandidate.src}
+                    alt={photo.caption || 'Photo from a specimen record'}
+                    onError={handlePhotoError}
+                    sx={{
+                      display: 'block',
+                      width: '100%',
+                      maxHeight: 224,
+                      objectFit: 'contain',
+                      borderRadius: 1,
+                    }}
+                  />
                 </Box>
               )}
               {acceptedTaxon && (
