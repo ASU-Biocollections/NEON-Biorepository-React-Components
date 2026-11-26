@@ -128,7 +128,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [acceptedOnly, setAcceptedOnly] = useState(acceptedOnlyFromLocation);
   const [activeTid, setActiveTid] = useState(selectedTaxon);
   const [revealInTree, setRevealInTree] = useState<RevealMode>('lineage');
-  const [checkRecordedTid, setCheckRecordedTid] = useState<string>();
+  const [visibilityCheck, setVisibilityCheck] = useState<{ tid: string }>();
   const [treeVisit, setTreeVisit] = useState(0);
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
@@ -242,10 +242,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   useEffect(() => {
     function onPopState() {
       const tid = selectedTaxon();
-      setCheckRecordedTid(undefined);
       const nextRecordsOnly = recordsOnlyFromLocation();
       const nextAcceptedOnly = acceptedOnlyFromLocation();
       const filterChanged = nextRecordsOnly !== recordsOnly || nextAcceptedOnly !== acceptedOnly;
+      setVisibilityCheck(tid && filterChanged && (nextRecordsOnly || nextAcceptedOnly) ? { tid } : undefined);
       if (filterChanged) {
         rememberExpansion();
         setRecordsOnly(nextRecordsOnly);
@@ -301,15 +301,19 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   }, [acceptedOnly, activeTid, apiUrl, revealInTree, revealLineage]);
 
   useEffect(() => {
-    if (!apiUrl || !recordsOnly || !checkRecordedTid || checkRecordedTid !== activeTid) {
+    const checkVisibleTid = visibilityCheck?.tid;
+    if (!apiUrl || (!acceptedOnly && !recordsOnly) || !checkVisibleTid || checkVisibleTid !== activeTid) {
       return undefined;
     }
     const controller = new AbortController();
-    const dataset = acceptedOnly ? 2 : 4;
-    const path = `col-api.php/dataset/${dataset}/tree/${checkRecordedTid}/recorded-ancestor`;
+    const dataset = (acceptedOnly ? 1 : 3) + Number(recordsOnly);
+    const route = acceptedOnly ? 'accepted-ancestor' : 'recorded-ancestor';
+    const path = `col-api.php/dataset/${dataset}/tree/${checkVisibleTid}/${route}`;
     const url = new URL(path, new URL(apiUrl, window.location.href));
+    const isCurrentCheck = () => !controller.signal.aborted && selectedTaxon() === checkVisibleTid
+      && acceptedOnlyFromLocation() === acceptedOnly && recordsOnlyFromLocation() === recordsOnly;
 
-    async function findRecordedAncestor() {
+    async function findVisibleAncestor() {
       try {
         const response = await fetch(url, {
           headers: { Accept: 'application/json' },
@@ -317,8 +321,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         });
         if (!response.ok) return;
         const { tid }: { tid?: number | null } = await response.json();
-        if (controller.signal.aborted || selectedTaxon() !== checkRecordedTid
-          || !recordsOnlyFromLocation() || tid === undefined || String(tid) === checkRecordedTid) {
+        if (!isCurrentCheck() || tid === undefined || String(tid) === checkVisibleTid) {
           return;
         }
         const destination = new URL(window.location.href);
@@ -329,15 +332,17 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         setRevealInTree(tid === null ? false : 'keep-open');
         setActiveTid(tid === null ? undefined : String(tid));
       } catch {
-        // The tree can still be browsed if the recorded-ancestor lookup fails.
+        // The tree can still be browsed if the ancestor lookup fails.
       } finally {
-        if (!controller.signal.aborted) setCheckRecordedTid(undefined);
+        if (!controller.signal.aborted) {
+          setVisibilityCheck((current) => (current === visibilityCheck ? undefined : current));
+        }
       }
     }
 
-    findRecordedAncestor();
+    findVisibleAncestor();
     return () => controller.abort();
-  }, [acceptedOnly, activeTid, apiUrl, checkRecordedTid, recordsOnly]);
+  }, [acceptedOnly, activeTid, apiUrl, recordsOnly, visibilityCheck]);
 
   useEffect(() => {
     if (!apiUrl || !activeTid) return undefined;
@@ -403,9 +408,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       setAcceptedOnly(checked);
     } else {
       setRecordsOnly(checked);
-      setCheckRecordedTid(checked ? activeTid : undefined);
     }
-  }, [activeTid, rememberExpansion]);
+    const filtering = checked || (name === 'accepted' ? recordsOnly : acceptedOnly);
+    setVisibilityCheck(filtering && activeTid ? { tid: activeTid } : undefined);
+  }, [acceptedOnly, activeTid, recordsOnly, rememberExpansion]);
 
   const handlePhotoError = useCallback(() => {
     setPhotoResult((current) => (
