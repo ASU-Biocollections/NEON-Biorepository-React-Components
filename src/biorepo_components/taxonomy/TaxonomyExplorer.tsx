@@ -743,7 +743,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     fullWidth
                     endIcon={<FormatListBulleted />}
                   >
-                    {`Browse ${recordCount?.toLocaleString() ?? '--'} `}
+                    Browse {recordCount !== undefined && `${recordCount.toLocaleString()} `}
                     {recordCount === 1 ? 'Record' : 'Records'}
                   </Button>
                 </Stack>
