@@ -23,6 +23,7 @@ interface Taxon {
   name: string;
   author: string | null;
   rank: string;
+  rankId: number | null;
   status: string;
   source: string | null;
 }
@@ -69,6 +70,7 @@ interface TaxonSearchProps {
 }
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
+const genusRankId = 180;
 const taxonCountSelector = ':is(.neon-taxonomy-terminal-count, .neon-taxonomy-species-count)';
 const nameStatusSelector = '.neon-taxonomy-name-status';
 const scientificNameSelector = '.neon-taxonomy-scientific-name';
@@ -89,6 +91,10 @@ const branchAnimation = {
     [`& ${descendantRowSelector}`]: { animation: 'none' },
   },
 };
+
+function scientificName({ name, rankId }: Taxon) {
+  return (rankId ?? 0) >= genusRankId ? <i>{name}</i> : name;
+}
 
 function treeRowTid(row: Element) {
   const tid = row.querySelector('.ant-tree-title > [id]')?.id;
@@ -582,7 +588,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         underline="hover"
         sx={{ overflowWrap: 'anywhere' }}
       >
-        {taxon.name}
+        {scientificName(taxon)}
       </Link>
     );
   }
@@ -711,7 +717,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   component="h2"
                   sx={{ fontWeight: 600, overflowWrap: 'anywhere' }}
                 >
-                  {selected.name}
+                  {scientificName(selected)}
                 </Typography>
                 {selected.author && (
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
