@@ -645,7 +645,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
             )}
           />
           <FormControlLabel
-            label="Hide branches without records"
+            label="Hide taxa without records"
             control={(
               <Switch
                 name="records"
