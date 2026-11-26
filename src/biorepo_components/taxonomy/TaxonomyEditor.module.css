@@ -56,50 +56,77 @@
 
 .workspace { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-.assemblyControls { display: grid; gap: 2px; margin-bottom: 6px; }
-.assemblyModes { display: flex; flex-wrap: wrap; gap: 4px; }
-.assemblyModes .button { min-height: 30px; padding: 3px 10px; }
+.assemblyToolbar { font-size: 13px; gap: 8px 16px; margin-bottom: 6px; padding-bottom: 5px; }
+.assemblyToolbar .nav { gap: 0; margin-inline-start: auto; }
+.assemblyToolbar .tab { padding: 4px 8px; }
+.assemblyModes { display: flex; flex-wrap: wrap; gap: 3px; }
+.assemblyModes .button { font-size: inherit; min-height: 26px; padding: 2px 9px; }
 .assemblyModes .button[aria-pressed='true'] {
   background: #e6f1fa;
   border-color: #a5cbe5;
   color: var(--tax-primary);
   font-weight: 600;
 }
-.assemblySlider { justify-self: center; max-width: calc(100% - 16px); }
-
 .assemblyWorkspace {
   display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(0, var(--assembly-left)) minmax(0, var(--assembly-right));
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .assemblyPane { min-width: 0; }
+.editor .assemblyPane :global(.MuiOutlinedInput-root.MuiInputBase-sizeSmall) {
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 30px;
+  padding-block: 0;
+}
+.editor .assemblyPane :global(.MuiAutocomplete-inputRoot .MuiAutocomplete-input) { padding-block: 4px; }
 .assemblySource {
   align-content: start;
   border-inline-start: 1px solid var(--tax-border);
   display: grid;
-  gap: 6px;
-  padding-inline-start: 14px;
+  gap: 2px;
+  padding-inline-start: 7px;
 }
 .assemblyHeading {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  font-size: 13px;
+  gap: 3px 8px;
   justify-content: space-between;
-  min-height: 34px;
+  min-height: 28px;
 }
 .editor .assemblyHeading .panelTitle {
-  font-size: 0.9375rem;
+  font-size: 13px;
   font-weight: 600;
   margin: 0;
   overflow-wrap: anywhere;
 }
-.assemblyHeading .button, .assemblyHeading .primary { min-height: 28px; padding: 3px 9px; }
-.assemblySource .treeScroll { padding-inline: 0; }
-.assemblySource .treeList > li { margin-block: 0; }
-.assemblySource .nameButton { font-size: 0.875rem; min-height: 26px; padding: 2px 5px; }
-.assemblySource .expand, .assemblySource .treeSpacer { height: 26px; line-height: 26px; }
-.assemblySource .expand { font-size: 14px; }
+.assemblyHeading .actions { gap: 4px; }
+.assemblyHeading .button {
+  align-items: center;
+  display: inline-flex;
+  font-size: inherit;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 7px;
+}
+.assemblyHeading .button svg { font-size: 15px; }
+
+.assemblySelection {
+  align-items: center;
+  border-block-start: 1px solid var(--tax-border);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 6px 12px;
+  justify-content: space-between;
+  margin-block-start: 8px;
+  padding-block: 6px;
+}
+.assemblySelection .actions { gap: 5px; }
+.editor .assemblySelection p { font-size: inherit; line-height: inherit; margin: 0; }
+.assemblySelection .button, .assemblySelection .primary { min-height: 26px; padding: 2px 8px; }
 
 .panel {
   background: var(--tax-paper);
@@ -145,32 +172,8 @@
 .search input { flex: 1 1 110px; }
 .field .search { padding: 0; }
 
-.treeScroll {
-  min-height: 280px;
-  max-height: min(56vh, 560px);
-  overflow: auto;
-  padding: 0 12px 12px;
-}
-
-.treeList, .pickerResults { list-style: none; margin: 0; padding: 0; }
-.treeList > li, .pickerResults > li { list-style: none; margin: 2px 0; padding: 0; }
-.treeRow { align-items: flex-start; display: flex; gap: 2px; }
-.branch { border-left: 1px solid #e0e8ef; margin-left: 11px; padding-left: 12px; }
-
-.expand, .treeSpacer {
-  background: none;
-  border: 0;
-  color: var(--tax-primary);
-  flex: 0 0 20px;
-  font: inherit;
-  height: 29px;
-  line-height: 29px;
-  padding: 0;
-  text-align: center;
-}
-
-.expand { cursor: pointer; font-size: 18px; }
-.expand:hover { background: var(--tax-low); }
+.pickerResults { list-style: none; margin: 0; padding: 0; }
+.pickerResults > li { list-style: none; margin: 2px 0; padding: 0; }
 
 .nameButton {
   background: none;
@@ -193,9 +196,7 @@
 .author { font-size: 0.86em; }
 .synonym { border: 1px solid #e5c585; border-radius: 3px; color: #78531a; font-size: 0.76em; margin-left: 7px; padding: 1px 4px; }
 
-.selection { display: grid; gap: 10px; margin-top: 14px; padding: 12px; }
-.selection p, .actions p, .form p { margin: 0; }
-.selection .actions { justify-content: space-between; }
+.actions p, .form p { margin: 0; }
 .selectedName { background: #e6f1fa; border-radius: 4px; display: inline-block; padding: 4px 8px; }
 .panelBody { display: grid; gap: 12px; padding: 12px; }
 .panelBody p { margin: 0; }
@@ -242,12 +243,11 @@
 
 @media (max-width: 760px) {
   .workspace, .assemblyWorkspace { grid-template-columns: 1fr; }
-  .assemblyControls .assemblySlider { display: none; }
+  .assemblyToolbar .nav { margin-inline-start: 0; }
   .assemblySource {
     border-block-start: 1px solid var(--tax-border);
     border-inline-start: 0;
     padding-block-start: 8px;
     padding-inline-start: 0;
   }
-  .treeScroll { min-height: 190px; max-height: 360px; }
 }

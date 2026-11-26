@@ -1,0 +1,73 @@
+.viewport {
+  max-height: min(56vh, 560px);
+  overflow: auto;
+}
+
+.list, .list > li { list-style: none; margin: 0; padding: 0; }
+
+.row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.caretButton, .spacer { flex: 0 0 24px; }
+
+.caretButton {
+  background: none;
+  border: 0;
+  color: var(--source-tree-text);
+  cursor: pointer;
+  display: grid;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+}
+
+.caret {
+  display: block;
+  height: 10px;
+  transition: transform 180ms ease;
+  width: 10px;
+}
+
+.caretButton[aria-expanded='true'] .caret { transform: rotate(90deg); }
+
+.nameButton {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--source-tree-text);
+  cursor: pointer;
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  font-size: 14px;
+  line-height: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0 8px;
+  text-align: start;
+}
+
+.nameButton:hover { background-color: var(--source-tree-hover); }
+.nameButton[aria-pressed='true'] { background-color: var(--source-tree-selection); }
+.scientificName { color: var(--source-tree-primary); }
+
+.branch { padding-inline-start: 24px; }
+.branch .row { animation: branchEnter 160ms ease-out; }
+
+@keyframes branchEnter {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 760px) {
+  .viewport { max-height: 360px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .branch .row { animation: none; }
+  .caret { transition: none; }
+}

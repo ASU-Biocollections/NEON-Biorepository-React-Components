@@ -660,6 +660,13 @@ export default function TaxonomyExplorer({ apiUrl, colApiUrl, editorTree }: Taxo
           '& .catalogue-of-life .taxon-autocomplete': { display: 'none' },
           '& .ant-tree-treenode': { alignSelf: 'stretch' },
           '& .ant-tree-node-content-wrapper': { cursor: 'pointer', flex: 1 },
+          ...(isEditor && {
+            '& .ant-tree .ant-tree-treenode': { alignItems: 'center' },
+            '& .ant-tree .ant-tree-switcher:not(.ant-tree-switcher-noop)': {
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            },
+            '& .ant-tree .ant-tree-switcher-icon': { display: 'inline-flex', lineHeight: 1 },
+          }),
           '& .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected:not(:hover)': {
             backgroundColor: 'transparent',
           },

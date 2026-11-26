@@ -105,8 +105,6 @@ export default function TaxonomyEditorDatasetPicker({
         />
       )}
       sx={{
-        '& .MuiOutlinedInput-root': { borderRadius: '4px', py: 0, minHeight: 34, fontSize: '0.875rem' },
-        '& .MuiAutocomplete-inputRoot .MuiAutocomplete-input': { py: '5px' },
         '& .MuiAutocomplete-popupIndicatorOpen': { transform: 'none' },
         '& .MuiAutocomplete-clearIndicator': { visibility: 'visible' },
       }}

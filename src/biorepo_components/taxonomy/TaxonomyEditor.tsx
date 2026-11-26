@@ -3,8 +3,8 @@
 import React, {
   useCallback, useEffect, useId, useRef, useState,
 } from 'react';
-import type { CSSProperties } from 'react';
-import Slider from '@mui/material/Slider';
+import Add from '@mui/icons-material/Add';
+import Refresh from '@mui/icons-material/Refresh';
 import {
   messageFor, read, readTaxon, write,
 } from './TaxonomyEditorApi';
@@ -62,7 +62,6 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
   const groupId = useId();
   const [tab, setTab] = useState<Tab>('Assembly');
   const [assemblyMode, setAssemblyMode] = useState<AssemblyMode>('modify');
-  const [assemblySplit, setAssemblySplit] = useState(50);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [selected, setSelected] = useState<BiorepoTaxon>();
   const [sourceDataset, setSourceDataset] = useState<SourceDataset>();
@@ -305,7 +304,27 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
 
   return (
     <div className={styles.editor}>
-      <div className={styles.toolbar}>
+      <div className={`${styles.toolbar} ${tab === 'Assembly' ? styles.assemblyToolbar : ''}`}>
+        {tab === 'Assembly' && (
+          <div className={styles.assemblyModes} role="group" aria-label="Assembly mode">
+            <button
+              type="button"
+              className={styles.button}
+              aria-pressed={assemblyMode === 'modify'}
+              onClick={() => setAssemblyMode('modify')}
+            >
+              Modify tree
+            </button>
+            <button
+              type="button"
+              className={styles.button}
+              aria-pressed={assemblyMode === 'sectors'}
+              onClick={() => setAssemblyMode('sectors')}
+            >
+              Add sectors
+            </button>
+          </div>
+        )}
         <nav className={styles.nav} aria-label="Taxonomy management">
           {tabs.map((item) => (
             <button
@@ -363,42 +382,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
 
       {tab === 'Assembly' && (
         <>
-          <div className={styles.assemblyControls}>
-            <div className={styles.assemblyModes} role="group" aria-label="Assembly mode">
-              <button
-                type="button"
-                className={styles.button}
-                aria-pressed={assemblyMode === 'modify'}
-                onClick={() => setAssemblyMode('modify')}
-              >
-                Modify tree
-              </button>
-              <button
-                type="button"
-                className={styles.button}
-                aria-pressed={assemblyMode === 'sectors'}
-                onClick={() => setAssemblyMode('sectors')}
-              >
-                Add sectors
-              </button>
-            </div>
-            <Slider
-              className={styles.assemblySlider}
-              size="small"
-              aria-label="Biorepository pane width"
-              valueLabelDisplay="auto"
-              valueLabelFormat={(value) => `${value}%`}
-              getAriaValueText={(value) => `${value}%`}
-              min={30}
-              max={70}
-              value={assemblySplit}
-              onChange={(_, value) => { if (typeof value === 'number') setAssemblySplit(value); }}
-            />
-          </div>
-          <div
-            className={styles.assemblyWorkspace}
-            style={{ '--assembly-left': `${assemblySplit}fr`, '--assembly-right': `${100 - assemblySplit}fr` } as CSSProperties}
-          >
+          <div className={styles.assemblyWorkspace}>
             <section className={styles.assemblyPane} aria-label="Biorepository assembly">
               <div className={styles.assemblyHeading}>
                 <h2 className={styles.panelTitle}>Biorepository assembly</h2>
@@ -409,6 +393,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                     disabled={busy}
                     onClick={() => setDialog('add-root')}
                   >
+                    <Add />
                     Add root
                   </button>
                   <button
@@ -417,6 +402,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                     disabled={busy}
                     onClick={refreshView}
                   >
+                    <Refresh />
                     Refresh tree
                   </button>
                 </div>
@@ -436,21 +422,12 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                       href={`https://www.checklistbank.org/dataset/${encodeURIComponent(sourceDataset.datasetKey)}`}
                       target="_blank"
                       rel="noreferrer"
+                      aria-label={`View ${sourceDataset.label} on ChecklistBank`}
                     >
-                      View source
+                      Source
                     </a>
                   )}
                 </div>
-                {assemblyMode === 'sectors' && (
-                  <button
-                    type="button"
-                    className={styles.primary}
-                    disabled={busy || !sourceDataset || sectorTarget === undefined}
-                    onClick={() => { if (sectorTarget !== undefined) saveSource(sectorTarget); }}
-                  >
-                    {activeSector ? 'Update sector' : 'Add sector'}
-                  </button>
-                )}
               </div>
               {datasetPicker}
               {sourceDataset && (
@@ -471,7 +448,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
           </div>
           {selected && (
             <section
-              className={`${styles.panel} ${styles.selection}`}
+              className={styles.assemblySelection}
               aria-label="Selected Biorepository taxon"
             >
               <div className={styles.actions}>
@@ -551,12 +528,14 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                   </button>
                 </div>
               )}
-              {assemblyMode === 'sectors' && sourceDataset && (
+              {assemblyMode === 'sectors' && (
                 <div className={styles.actions}>
-                  <p className={styles.muted}>
-                    {sourceTaxon ? `Source taxon · ${sourceTaxon}`
-                      : 'The source taxon will be matched by scientific name.'}
-                  </p>
+                  {sourceDataset && (
+                    <p className={styles.muted}>
+                      {sourceTaxon ? `Source taxon · ${sourceTaxon}`
+                        : 'The source taxon will be matched by scientific name.'}
+                    </p>
+                  )}
                   {sourceRootId && (
                     <button
                       type="button"
@@ -569,6 +548,14 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                       Clear source taxon
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className={styles.primary}
+                    disabled={busy || !sourceDataset || sectorTarget === undefined}
+                    onClick={() => { if (sectorTarget !== undefined) saveSource(sectorTarget); }}
+                  >
+                    {activeSector ? 'Update sector' : 'Add sector'}
+                  </button>
                 </div>
               )}
             </section>

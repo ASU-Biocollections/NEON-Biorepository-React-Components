@@ -3,10 +3,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import Cancel from '@mui/icons-material/Cancel';
-import { Autocomplete, TextField } from '@mui/material';
+import { Autocomplete, Box, TextField } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { messageFor } from './TaxonomyEditorApi';
 import type { EditorNode, Page } from './TaxonomyEditorApi';
 import styles from './TaxonomyEditor.module.css';
+import sourceStyles from './TaxonomyEditorSourceTree.module.css';
 
 const pageSize = 50;
 const italicRanks = new Set([
@@ -41,18 +43,21 @@ interface SearchResult {
   error?: string;
 }
 
-export function TaxonName({ node, italicize = false }: { node: EditorNode; italicize?: boolean }) {
+export function TaxonName({
+  node, italicize = false, scientificNameClass, rankSeparator = '',
+}: { node: EditorNode; italicize?: boolean; scientificNameClass?: string; rankSeparator?: string }) {
   return (
     <>
       {node.rank && (
         <span className={styles.rank}>
           {node.rank}
+          {rankSeparator}
           {' '}
         </span>
       )}
       {italicize && italicRanks.has(node.rank?.toLowerCase() ?? '')
-        ? <i>{node.name}</i>
-        : <span>{node.name}</span>}
+        ? <i className={scientificNameClass}>{node.name}</i>
+        : <span className={scientificNameClass}>{node.name}</span>}
       {node.author && (
         <span className={styles.author}>
           {' '}
@@ -275,33 +280,35 @@ export default function TaxonomyEditorTree({
       <>
         {branch?.error && <p className={styles.error} role="alert">{branch.error}</p>}
         {!!nodes.length && (
-          <ul className={styles.treeList}>
+          <ul className={sourceStyles.list}>
             {nodes.filter(({ id }) => !ancestors.has(id)).map((node) => (
               <li key={node.id}>
-                <div className={styles.treeRow}>
+                <div className={sourceStyles.row}>
                   {node.hasChildren || open.has(node.id) ? (
                     <button
                       type="button"
-                      className={styles.expand}
+                      className={sourceStyles.caretButton}
                       aria-expanded={open.has(node.id)}
                       aria-label={`${open.has(node.id) ? 'Collapse' : 'Expand'} ${node.name}`}
                       onClick={() => toggle(node)}
                     >
-                      <span aria-hidden="true">{open.has(node.id) ? '▾' : '▸'}</span>
+                      <svg aria-hidden="true" viewBox="0 0 10 10" className={sourceStyles.caret}>
+                        <path d="M3 2L7 5L3 8Z" fill="currentColor" />
+                      </svg>
                     </button>
-                  ) : <span className={styles.treeSpacer} />}
+                  ) : <span className={sourceStyles.spacer} />}
                   <button
                     type="button"
-                    className={styles.nameButton}
+                    className={sourceStyles.nameButton}
                     data-taxon-id={node.id}
                     aria-pressed={selected === node.id}
                     onClick={() => selectNode(node)}
                   >
-                    <TaxonName node={node} italicize />
+                    <TaxonName node={node} italicize scientificNameClass={sourceStyles.scientificName} rankSeparator=":" />
                   </button>
                 </div>
                 {open.has(node.id) && (
-                  <div className={styles.branch}>
+                  <div className={sourceStyles.branch}>
                     {renderNodes(node.id, new Set([...ancestors, node.id]))}
                   </div>
                 )}
@@ -355,16 +362,10 @@ export default function TaxonomyEditorTree({
           />
         )}
         sx={{
-          '& .MuiOutlinedInput-root.MuiInputBase-sizeSmall': {
-            borderRadius: '4px',
-            minHeight: 34,
-            py: 0,
-            fontSize: '0.875rem',
-          },
-          '& .MuiAutocomplete-inputRoot .MuiAutocomplete-input': { py: '5px' },
           '& .MuiAutocomplete-clearIndicator': {
             visibility: 'visible',
-            color: 'text.secondary',
+            color: 'action.disabled',
+            '&:hover': { color: 'action.active', bgcolor: 'transparent' },
           },
         }}
       />
@@ -374,9 +375,21 @@ export default function TaxonomyEditorTree({
           : !matching.items.length && <p className={styles.muted} role="status">No matching taxa.</p>
         : <p className={styles.muted} role="status">Searching…</p>)}
       {revealError && <p className={styles.error} role="alert">{revealError}</p>}
-      <div ref={tree} className={styles.treeScroll} aria-busy={revealing || branches.root?.loading}>
+      <Box
+        ref={tree}
+        className={sourceStyles.viewport}
+        aria-busy={revealing || branches.root?.loading}
+        sx={(theme) => ({
+          '--source-tree-primary': theme.palette.primary.main,
+          '--source-tree-selection': alpha(theme.palette.primary.main, 0.13),
+          '--source-tree-text': theme.palette.text.primary,
+          '--source-tree-rank': alpha(theme.palette.text.primary, 0.45),
+          '--source-tree-hover': theme.palette.action.hover,
+          [`& .${styles.rank}`]: { color: 'var(--source-tree-rank)', fontSize: 'inherit' },
+        })}
+      >
         {renderNodes(null)}
-      </div>
+      </Box>
     </>
   );
 }
