@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from 'react';
+import Cancel from '@mui/icons-material/Cancel';
 import ChevronRight from '@mui/icons-material/ChevronRight';
 import FormatListBulleted from '@mui/icons-material/FormatListBulleted';
 import ImageOutlined from '@mui/icons-material/ImageOutlined';
@@ -173,6 +174,7 @@ function TaxonSearch({ apiUrl, datasetKey, focusedName, query, onQueryChange, on
       freeSolo
       fullWidth
       size="small"
+      clearIcon={<Cancel sx={{ fontSize: 14 }} />}
       options={result?.url === requestUrl ? result.options : []}
       value={null}
       inputValue={query ?? focusedName}
@@ -195,7 +197,15 @@ function TaxonSearch({ apiUrl, datasetKey, focusedName, query, onQueryChange, on
           }}
         />
       )}
-      sx={{ mb: 1 }}
+      sx={{
+        mb: 1,
+        '& .MuiOutlinedInput-root': { borderRadius: '6px' },
+        '& .MuiAutocomplete-clearIndicator': {
+          color: 'action.disabled',
+          visibility: 'visible',
+          '&:hover': { color: 'action.active', bgcolor: 'transparent' },
+        },
+      }}
     />
   );
 }
