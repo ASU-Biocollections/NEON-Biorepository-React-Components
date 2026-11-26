@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, MouseEvent } from 'react';
 import ChevronRight from '@mui/icons-material/ChevronRight';
+import FormatListBulleted from '@mui/icons-material/FormatListBulleted';
+import ImageOutlined from '@mui/icons-material/ImageOutlined';
 import {
   Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, Link, Paper, Stack, Switch,
   Typography,
@@ -71,6 +73,11 @@ const branchAnimation = {
   },
 };
 
+function treeRowTid(row: Element) {
+  const tid = row.querySelector('.ant-tree-title > [id]')?.id;
+  return tid && /^[1-9]\d*$/.test(tid) ? tid : undefined;
+}
+
 function getExpandableRows(section: HTMLElement) {
   const rows = section.querySelectorAll<HTMLElement>('[role="treeitem"][aria-expanded]');
   return Array.from(rows).flatMap((row) => {
@@ -78,8 +85,7 @@ function getExpandableRows(section: HTMLElement) {
     const switcher = row.querySelector<HTMLElement>(
       '.ant-tree-switcher:not(.ant-tree-switcher-noop)',
     );
-    const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
-    const key = link && new URL(link.href).searchParams.get('tid');
+    const key = treeRowTid(row);
     if (!switcher || !key) return [];
     return [{ key, switcher, expanded: row.getAttribute('aria-expanded') === 'true' }];
   });
@@ -108,10 +114,11 @@ function acceptedOnlyFromLocation() {
   return new URLSearchParams(window.location.search).get('accepted') === '1';
 }
 
-function recordsListLink(apiUrl: string, taxon: TaxonDetail) {
+function recordsListLink(apiUrl: string, taxon: TaxonDetail, tab?: 'gallery') {
   const url = new URL('../../collections/list.php', new URL(apiUrl, window.location.href));
   url.searchParams.set('db', 'all,all-others');
   url.searchParams.set('taxa', taxon.recordsTaxa ?? String(taxon.tid));
+  if (tab === 'gallery') url.searchParams.set('tabindex', '3');
   return url.href;
 }
 
@@ -240,6 +247,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         rememberExpansion();
         setRecordsOnly(nextRecordsOnly);
         setAcceptedOnly(nextAcceptedOnly);
+        setRevealInTree(false);
       }
       if (tid !== activeTid) {
         setActiveTid(tid);
@@ -260,6 +268,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     const url = new URL(apiUrl, window.location.href);
     url.searchParams.set('action', 'taxon');
     url.searchParams.set('tid', tid);
+    if (!acceptedOnly) url.searchParams.set('name-mode', 'all');
 
     async function loadTaxon() {
       try {
@@ -286,14 +295,15 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
     loadTaxon();
     return () => controller.abort();
-  }, [activeTid, apiUrl, revealInTree, revealLineage]);
+  }, [acceptedOnly, activeTid, apiUrl, revealInTree, revealLineage]);
 
   useEffect(() => {
     if (!apiUrl || !recordsOnly || !checkRecordedTid || checkRecordedTid !== activeTid) {
       return undefined;
     }
     const controller = new AbortController();
-    const path = `col-api.php/dataset/2/tree/${checkRecordedTid}/recorded-ancestor`;
+    const dataset = acceptedOnly ? 2 : 4;
+    const path = `col-api.php/dataset/${dataset}/tree/${checkRecordedTid}/recorded-ancestor`;
     const url = new URL(path, new URL(apiUrl, window.location.href));
 
     async function findRecordedAncestor() {
@@ -324,7 +334,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
     findRecordedAncestor();
     return () => controller.abort();
-  }, [activeTid, apiUrl, checkRecordedTid, recordsOnly]);
+  }, [acceptedOnly, activeTid, apiUrl, checkRecordedTid, recordsOnly]);
 
   useEffect(() => {
     if (!apiUrl || !activeTid) return undefined;
@@ -386,6 +396,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     window.history.pushState(null, '', url.href);
     rememberExpansion();
     if (name === 'accepted') {
+      setRevealInTree(false);
       setAcceptedOnly(checked);
     } else {
       setRecordsOnly(checked);
@@ -441,13 +452,9 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   }, [apiUrl]);
 
   const openTreeRow = useCallback((row: Element) => {
-    const link = row.querySelector<HTMLAnchorElement>('.ant-tree-title a[href]');
-    if (!link) return;
-    const url = new URL(link.href);
-    const tid = url.searchParams.get('tid');
-    if (!tid || url.href !== taxonProfileLink(tid)) return;
-    openTaxon(tid);
-  }, [openTaxon, taxonProfileLink]);
+    const tid = treeRowTid(row);
+    if (tid) openTaxon(tid);
+  }, [openTaxon]);
 
   const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
     markTreeInteraction(event);
@@ -646,7 +653,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     variant="contained"
                     size="medium"
                     fullWidth
-                    endIcon={<ChevronRight />}
+                    endIcon={<FormatListBulleted />}
                   >
                     {`Browse ${recordCount?.toLocaleString() ?? '--'} `}
                     {recordCount === 1 ? 'Record' : 'Records'}
@@ -672,6 +679,16 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                       borderRadius: 1,
                     }}
                   />
+                  <Button
+                    href={recordsListLink(apiUrl, selected, 'gallery')}
+                    variant="outlined"
+                    size="medium"
+                    fullWidth
+                    endIcon={<ImageOutlined />}
+                    sx={{ mt: 1 }}
+                  >
+                    Browse images
+                  </Button>
                 </Box>
               )}
               {acceptedNames.size > 0 && (
@@ -683,6 +700,20 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     {Array.from(acceptedNames.values(), (taxon) => (
                       <Typography component="li" variant="body2" key={taxon.tid}>
                         {detailLink(taxon)}
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+              {otherSynonyms.length > 0 && (
+                <Box sx={detailSectionStyle}>
+                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
+                    Synonyms
+                  </Typography>
+                  <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
+                    {otherSynonyms.map((synonym) => (
+                      <Typography component="li" variant="body2" key={synonym.tid}>
+                        {detailLink(synonym)}
                       </Typography>
                     ))}
                   </Stack>
@@ -716,20 +747,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                           </Typography>
                         )}
                       </Stack>
-                    ))}
-                  </Stack>
-                </Box>
-              )}
-              {otherSynonyms.length > 0 && (
-                <Box sx={detailSectionStyle}>
-                  <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
-                    Synonyms
-                  </Typography>
-                  <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
-                    {otherSynonyms.map((synonym) => (
-                      <Typography component="li" variant="body2" key={synonym.tid}>
-                        {detailLink(synonym)}
-                      </Typography>
                     ))}
                   </Stack>
                 </Box>
