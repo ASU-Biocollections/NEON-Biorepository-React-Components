@@ -32,9 +32,14 @@ export default function ClientOnly() {
         const { default: TaxonomyEditor } = await import(
           '../../biorepo_components/taxonomy/TaxonomyEditor',
         );
+        const { configureTaxonomyExplorer } = await import('../../biorepo_components/taxonomy/TaxonomyExplorer');
+        const apiUrl = element.dataset.apiUrl ?? '';
+        const colApiUrl = new URL('col-api.php/editor/', new URL(apiUrl, window.location.href)).href;
+        configureTaxonomyExplorer(colApiUrl);
         return (
           <TaxonomyEditor
-            apiUrl={element.dataset.apiUrl ?? ''}
+            apiUrl={apiUrl}
+            colApiUrl={colApiUrl}
             csrfToken={element.dataset.csrfToken ?? ''}
           />
         );

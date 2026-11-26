@@ -5,7 +5,7 @@ import React, {
 } from 'react';
 import type { SubmitEvent } from 'react';
 import {
-  messageFor, read, readTaxa, readTaxon, write,
+  messageFor, read, readTaxon, write,
 } from './TaxonomyEditorApi';
 import type {
   BiorepoTaxon,
@@ -23,6 +23,7 @@ import {
 import TaxonomyEditorHistory, { runLabel } from './TaxonomyEditorHistory';
 import type { TaxonomyRun } from './TaxonomyEditorHistory';
 import TaxonomyEditorTree, { TaxonName } from './TaxonomyEditorTree';
+import TaxonomyExplorer from './TaxonomyExplorer';
 import styles from './TaxonomyEditor.module.css';
 
 const tabs = ['Assembly', 'Sectors', 'Sources', 'History'] as const;
@@ -42,6 +43,7 @@ const groups = [
 
 interface EditorProps {
   apiUrl: string;
+  colApiUrl: string;
   csrfToken: string;
 }
 
@@ -134,7 +136,7 @@ function titleForSector(sector: Sector) {
   return sector.rootName || (sector.rootTid ? `Taxon ${sector.rootTid}` : 'Backbone');
 }
 
-export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
+export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorProps) {
   const groupId = useId();
   const [tab, setTab] = useState<Tab>('Assembly');
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -150,6 +152,7 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
   const selectedId = useRef<number | null>(null);
   const [group, setGroup] = useState('');
   const [revision, setRevision] = useState(0);
+  const [navigationVersion, setNavigationVersion] = useState(0);
   const [version, setVersion] = useState<number>();
   const [error, setError] = useState('');
   const [sourceError, setSourceError] = useState('');
@@ -178,16 +181,6 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
     };
   }, [apiUrl, revision]);
 
-  const loadTaxa = useCallback(
-    (parent: number | null, offset: number, limit: number) => (
-      readTaxa(apiUrl, 'tree', { parent, offset, limit })
-    ),
-    [apiUrl],
-  );
-  const searchTaxa = useCallback(
-    (q: string, offset: number, limit: number) => readTaxa(apiUrl, 'search', { q, offset, limit }),
-    [apiUrl],
-  );
   const loadSource = useCallback(
     (parent: EditorNode['id'] | null, offset: number, limit: number) => (
       read<Page<EditorNode>>(apiUrl, 'source-tree', {
@@ -213,7 +206,7 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
     setDialog(null);
   }
 
-  function loadSelected(tid: number) {
+  const loadSelected = useCallback((tid: number) => {
     selectedId.current = tid;
     readTaxon(apiUrl, tid)
       .then((taxon) => {
@@ -222,11 +215,22 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
       .catch((err) => {
         if (selectedId.current === tid) setError(messageFor(err));
       });
-  }
+  }, [apiUrl]);
 
-  function selectTaxon(taxon: BiorepoTaxon) {
-    setSelected(taxon);
-    loadSelected(taxon.tid);
+  const selectTaxon = useCallback((tid: number | null) => {
+    if (selectedId.current === tid) return;
+    setSelected(undefined);
+    selectedId.current = tid;
+    if (tid !== null) loadSelected(tid);
+  }, [loadSelected]);
+
+  function showTaxonInAssembly(tid: number | null) {
+    const url = new URL(window.location.href);
+    if (tid === null) url.searchParams.delete('tid');
+    else url.searchParams.set('tid', String(tid));
+    if (url.href !== window.location.href) window.history.pushState(null, '', url.href);
+    setNavigationVersion((version) => version + 1);
+    setTab('Assembly');
   }
 
   function refreshView() {
@@ -236,10 +240,7 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
 
   function openSector(sector: Sector) {
     selectDataset(sector, sector.sourceRootId);
-    setSelected(undefined);
-    if (sector.rootTid) loadSelected(sector.rootTid);
-    else selectedId.current = null;
-    setTab('Assembly');
+    showTaxonInAssembly(sector.rootTid || null);
   }
 
   async function mutate(work: () => Promise<void>) {
@@ -428,15 +429,10 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
       {tab === 'Assembly' && (
         <>
           <div className={styles.workspace}>
-            <TaxonomyEditorTree
-              key={revision}
-              title="Biorepository assembly"
-              loadChildren={loadTaxa}
-              search={searchTaxa}
-              selected={selected?.tid}
-              onSelect={(taxon) => selectTaxon(taxon)}
-              actions={(
-                <>
+            <section className={styles.panel} aria-label="Biorepository assembly">
+              <div className={styles.panelHeader}>
+                <h2 className={styles.panelTitle}>Biorepository assembly</h2>
+                <div className={styles.actions}>
                   <button
                     type="button"
                     className={styles.button}
@@ -453,9 +449,16 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
                   >
                     Reload tree
                   </button>
-                </>
-              )}
-            />
+                </div>
+              </div>
+              <div className={styles.panelBody}>
+                <TaxonomyExplorer
+                  apiUrl={apiUrl}
+                  colApiUrl={colApiUrl}
+                  editorTree={{ revision, navigationVersion, onSelectionChange: selectTaxon }}
+                />
+              </div>
+            </section>
             {sourceDataset ? (
               <TaxonomyEditorTree
                 key={sourceDataset.datasetKey}
@@ -780,11 +783,7 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
           selectedRunId={selectedRunId}
           onSelect={setSelectedRunId}
           busy={busy}
-          onOpenTaxon={(tid) => {
-            setSelected(undefined);
-            loadSelected(tid);
-            setTab('Assembly');
-          }}
+          onOpenTaxon={showTaxonInAssembly}
           onResume={(run) => (run.kind === 'neon'
             ? runUpdate('neon', run.group ?? '', run.runId)
             : runUpdate('refresh', run.rootTid ?? 0, run.runId))}
@@ -864,7 +863,8 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
             setDialog(null);
             setNotice('Taxon saved.');
             setRevision((n) => n + 1);
-            loadSelected(tid);
+            if (selectedId.current === tid) loadSelected(tid);
+            showTaxonInAssembly(tid);
           }}
         />
       )}

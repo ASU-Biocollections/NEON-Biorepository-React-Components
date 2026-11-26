@@ -16,6 +16,12 @@ import 'col-browser/style.css';
 
 interface TaxonomyExplorerProps {
   apiUrl: string;
+  colApiUrl?: string;
+  editorTree?: {
+    revision: number;
+    navigationVersion: number;
+    onSelectionChange: (tid: number | null) => void;
+  };
 }
 
 interface Taxon {
@@ -61,7 +67,7 @@ interface TaxonSuggestion {
 }
 
 interface TaxonSearchProps {
-  apiUrl: string;
+  colApiUrl: string;
   datasetKey: number;
   focusedName: string;
   query: string | null;
@@ -145,10 +151,10 @@ function recordsListLink(apiUrl: string, taxon: TaxonDetail, tab?: 'gallery') {
   return url.href;
 }
 
-function TaxonSearch({ apiUrl, datasetKey, focusedName, query, onQueryChange, onSelect }: TaxonSearchProps) {
+function TaxonSearch({ colApiUrl, datasetKey, focusedName, query, onQueryChange, onSelect }: TaxonSearchProps) {
   const term = query?.trim() ?? '';
   const [result, setResult] = useState<{ url: string; options: TaxonSuggestion[] }>();
-  const url = new URL(`col-api.php/dataset/${datasetKey}/nameusage/suggest`, new URL(apiUrl, window.location.href));
+  const url = new URL(`dataset/${datasetKey}/nameusage/suggest`, colApiUrl);
   url.searchParams.set('limit', '25');
   url.searchParams.set('q', term);
   const requestUrl = term ? url.href : '';
@@ -216,9 +222,12 @@ function TaxonSearch({ apiUrl, datasetKey, focusedName, query, onQueryChange, on
   );
 }
 
-export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
-  const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
-  const [acceptedOnly, setAcceptedOnly] = useState(acceptedOnlyFromLocation);
+export default function TaxonomyExplorer({ apiUrl, colApiUrl, editorTree }: TaxonomyExplorerProps) {
+  const isEditor = editorTree !== undefined;
+  const { revision, navigationVersion, onSelectionChange } = editorTree ?? {};
+  const treeApiUrl = colApiUrl ?? new URL('col-api.php/', new URL(apiUrl, window.location.href)).href;
+  const [recordsOnly, setRecordsOnly] = useState(() => !isEditor && recordsOnlyFromLocation());
+  const [acceptedOnly, setAcceptedOnly] = useState(() => !isEditor && acceptedOnlyFromLocation());
   const [activeTid, setActiveTid] = useState(selectedTaxon);
   const [revealInTree, setRevealInTree] = useState<RevealMode>('lineage');
   const [visibilityCheck, setVisibilityCheck] = useState<{ tid: string }>();
@@ -233,6 +242,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const pendingKeys = useRef<Set<string> | null>(null);
   const restoringExpansion = useRef<string | null>(null);
   const taxonCountCache = useRef(new Map<number, CachedTaxonCounts>());
+  const previousRevision = useRef(revision);
+  const previousNavigationVersion = useRef(navigationVersion);
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
@@ -257,6 +268,17 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     }
     setExpansionPlan([...expandedKeys.current]);
   }, []);
+
+  useEffect(() => {
+    if (revision === previousRevision.current) return;
+    previousRevision.current = revision;
+    rememberExpansion();
+    setTreeVisit((visit) => visit + 1);
+  }, [rememberExpansion, revision]);
+
+  useEffect(() => {
+    onSelectionChange?.(activeTid ? Number(activeTid) : null);
+  }, [activeTid, onSelectionChange]);
 
   useEffect(() => {
     const section = treeSection.current;
@@ -327,6 +349,16 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     setExpansionPlan((open) => (keepOpen ? [...new Set([...open, ...lineage])] : lineage));
   }, []);
 
+  useEffect(() => {
+    if (navigationVersion === previousNavigationVersion.current) return;
+    previousNavigationVersion.current = navigationVersion;
+    const tid = selectedTaxon();
+    setSearchQuery(null);
+    setActiveTid(tid);
+    setRevealInTree(tid ? 'keep-open' : false);
+    if (tid && tid === activeTid && selected) revealLineage(selected, true);
+  }, [activeTid, navigationVersion, revealLineage, selected]);
+
   const resetTree = useCallback(() => {
     setExpansionPlan([]);
     setTreeVisit((visit) => visit + 1);
@@ -335,8 +367,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   useEffect(() => {
     function onPopState() {
       const tid = selectedTaxon();
-      const nextRecordsOnly = recordsOnlyFromLocation();
-      const nextAcceptedOnly = acceptedOnlyFromLocation();
+      const nextRecordsOnly = !isEditor && recordsOnlyFromLocation();
+      const nextAcceptedOnly = !isEditor && acceptedOnlyFromLocation();
       const filterChanged = nextRecordsOnly !== recordsOnly || nextAcceptedOnly !== acceptedOnly;
       setVisibilityCheck(tid && filterChanged && (nextRecordsOnly || nextAcceptedOnly) ? { tid } : undefined);
       if (filterChanged) {
@@ -348,14 +380,14 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       if (tid !== activeTid) {
         setSearchQuery(null);
         setActiveTid(tid);
-        setRevealInTree(filterChanged ? false : 'lineage');
+        setRevealInTree(isEditor && tid ? 'keep-open' : filterChanged ? false : 'lineage');
         if (!tid && !filterChanged) resetTree();
       }
     }
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [acceptedOnly, activeTid, recordsOnly, rememberExpansion, resetTree]);
+  }, [acceptedOnly, activeTid, isEditor, recordsOnly, rememberExpansion, resetTree]);
 
   useEffect(() => {
     if (!activeTid || !apiUrl) return undefined;
@@ -365,7 +397,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     const url = new URL(apiUrl, window.location.href);
     url.searchParams.set('action', 'taxon');
     url.searchParams.set('tid', tid);
-    if (!acceptedOnly) url.searchParams.set('name-mode', 'all');
+    if (isEditor) {
+      url.searchParams.set('scope', 'all');
+      url.searchParams.set('tree-view', '1');
+    } else if (!acceptedOnly) url.searchParams.set('name-mode', 'all');
 
     async function loadTaxon() {
       try {
@@ -379,8 +414,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         if (!body.data) throw new Error('Taxon details could not be loaded.');
         if (controller.signal.aborted) return;
         setResult({ tid, taxon: body.data });
-        if (revealInTree) {
-          revealLineage(body.data, revealInTree === 'keep-open');
+        if (isEditor || revealInTree) {
+          revealLineage(body.data, isEditor || revealInTree === 'keep-open');
         }
       } catch (reason) {
         if (!controller.signal.aborted) {
@@ -392,7 +427,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
     loadTaxon();
     return () => controller.abort();
-  }, [acceptedOnly, activeTid, apiUrl, revealInTree, revealLineage]);
+  }, [acceptedOnly, activeTid, apiUrl, isEditor, revealInTree, revealLineage, revision]);
 
   useEffect(() => {
     const checkVisibleTid = visibilityCheck?.tid;
@@ -402,8 +437,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     const controller = new AbortController();
     const dataset = (acceptedOnly ? 1 : 3) + Number(recordsOnly);
     const route = acceptedOnly ? 'accepted-ancestor' : 'recorded-ancestor';
-    const path = `col-api.php/dataset/${dataset}/tree/${checkVisibleTid}/${route}`;
-    const url = new URL(path, new URL(apiUrl, window.location.href));
+    const url = new URL(`dataset/${dataset}/tree/${checkVisibleTid}/${route}`, treeApiUrl);
     const isCurrentCheck = () => !controller.signal.aborted && selectedTaxon() === checkVisibleTid
       && acceptedOnlyFromLocation() === acceptedOnly && recordsOnlyFromLocation() === recordsOnly;
 
@@ -437,10 +471,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
     findVisibleAncestor();
     return () => controller.abort();
-  }, [acceptedOnly, activeTid, apiUrl, recordsOnly, visibilityCheck]);
+  }, [acceptedOnly, activeTid, apiUrl, recordsOnly, treeApiUrl, visibilityCheck]);
 
   useEffect(() => {
-    if (!apiUrl || !activeTid) return undefined;
+    if (isEditor || !apiUrl || !activeTid) return undefined;
     const tid = Number(activeTid);
     const controller = new AbortController();
 
@@ -487,7 +521,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       });
     }
     return () => controller.abort();
-  }, [apiUrl, activeTid]);
+  }, [activeTid, apiUrl, isEditor]);
 
   const changeTreeFilter = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const { name, checked } = event.target;
@@ -606,7 +640,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   return (
     <Box sx={{
       display: 'grid',
-      gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) minmax(16rem, 22rem)' },
+      gridTemplateColumns: isEditor ? 'minmax(0, 1fr)'
+        : { xs: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) minmax(16rem, 22rem)' },
       alignItems: 'start',
       gap: 3,
     }}
@@ -638,7 +673,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           [`& ${nameStatusSelector}`]: { color: 'text.secondary', whiteSpace: 'nowrap' },
         }}
       >
-        <Stack direction="row" sx={{
+        {!isEditor && <Stack direction="row" sx={{
           alignItems: 'center',
           flexWrap: 'wrap',
           columnGap: 2,
@@ -673,24 +708,27 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
               />
             )}
           />
-        </Stack>
+        </Stack>}
         <TaxonSearch
-          apiUrl={apiUrl}
+          colApiUrl={treeApiUrl}
           datasetKey={datasetKey}
           focusedName={selected?.name ?? ''}
           query={searchQuery}
           onQueryChange={setSearchQuery}
           onSelect={selectSearchTaxon}
         />
-        <Tree
-          key={`${datasetKey}-${treeVisit}`}
-          datasetKey={datasetKey}
-          autoFocus={false}
-          insertPlaceholder={false}
-          onExpandedTaxonKeyChange={handleTreeSelection}
-        />
+        <Box sx={isEditor ? { maxHeight: { xs: 360, md: 'min(56vh, 560px)' }, overflow: 'auto' } : undefined}>
+          <Tree
+            key={`${datasetKey}-${treeVisit}`}
+            datasetKey={datasetKey}
+            autoFocus={false}
+            insertPlaceholder={false}
+            onExpandedTaxonKeyChange={handleTreeSelection}
+          />
+        </Box>
+        {isEditor && error && <Alert severity="error">{error}</Alert>}
       </Box>
-      {activeTid && (
+      {!isEditor && activeTid && (
         <Paper
           component="section"
           aria-label="Taxon details"
