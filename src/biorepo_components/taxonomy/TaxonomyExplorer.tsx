@@ -4,8 +4,8 @@ import ChevronRight from '@mui/icons-material/ChevronRight';
 import FormatListBulleted from '@mui/icons-material/FormatListBulleted';
 import ImageOutlined from '@mui/icons-material/ImageOutlined';
 import {
-  Alert, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, Link, Paper, Stack, Switch,
-  Typography,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Divider, FormControlLabel, Link, Paper,
+  Stack, Switch, TextField, Typography,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
@@ -51,6 +51,20 @@ type TaxonCounts = { count: number; imageCount?: number };
 type TaxonCountResult = { tid: number; counts: TaxonCounts };
 type CachedTaxonCounts = { counts: TaxonCounts; expiresAt: number };
 type RevealMode = false | 'lineage' | 'keep-open';
+
+interface TaxonSuggestion {
+  usageId: string;
+  suggestion: string;
+}
+
+interface TaxonSearchProps {
+  apiUrl: string;
+  datasetKey: number;
+  focusedName: string;
+  query: string | null;
+  onQueryChange: (value: string) => void;
+  onSelect: (tid: string) => void;
+}
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
 const taxonCountSelector = ':is(.neon-taxonomy-terminal-count, .neon-taxonomy-species-count)';
@@ -123,6 +137,68 @@ function recordsListLink(apiUrl: string, taxon: TaxonDetail, tab?: 'gallery') {
   return url.href;
 }
 
+function TaxonSearch({ apiUrl, datasetKey, focusedName, query, onQueryChange, onSelect }: TaxonSearchProps) {
+  const term = query?.trim() ?? '';
+  const [result, setResult] = useState<{ url: string; options: TaxonSuggestion[] }>();
+  const url = new URL(`col-api.php/dataset/${datasetKey}/nameusage/suggest`, new URL(apiUrl, window.location.href));
+  url.searchParams.set('limit', '25');
+  url.searchParams.set('q', term);
+  const requestUrl = term ? url.href : '';
+
+  useEffect(() => {
+    if (!requestUrl) return undefined;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(requestUrl, {
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const options: TaxonSuggestion[] = await response.json();
+        if (!controller.signal.aborted) setResult({ url: requestUrl, options });
+      } catch {
+        // A failed suggestion request does not prevent browsing the tree.
+      }
+    }, 500);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [requestUrl]);
+
+  return (
+    <Autocomplete
+      freeSolo
+      fullWidth
+      size="small"
+      options={result?.url === requestUrl ? result.options : []}
+      value={null}
+      inputValue={query ?? focusedName}
+      filterOptions={(options) => options}
+      getOptionLabel={(option) => typeof option === 'string' ? option : option.suggestion}
+      getOptionKey={(option) => typeof option === 'string' ? option : option.usageId}
+      onInputChange={(_, value, reason) => {
+        if (reason === 'input' || reason === 'clear') onQueryChange(value);
+      }}
+      onChange={(_, option) => {
+        if (option && typeof option !== 'string') onSelect(option.usageId);
+      }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          placeholder="Find taxon"
+          slotProps={{
+            ...params.slotProps,
+            htmlInput: { ...params.slotProps.htmlInput, 'aria-label': 'Find taxon' },
+          }}
+        />
+      )}
+      sx={{ mb: 1 }}
+    />
+  );
+}
+
 export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [recordsOnly, setRecordsOnly] = useState(recordsOnlyFromLocation);
   const [acceptedOnly, setAcceptedOnly] = useState(acceptedOnlyFromLocation);
@@ -132,13 +208,13 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [treeVisit, setTreeVisit] = useState(0);
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
   const [countResult, setCountResult] = useState<TaxonCountResult | null>(null);
   const treeSection = useRef<HTMLElement>(null);
   const expandedKeys = useRef(new Set<string>());
   const pendingKeys = useRef<Set<string> | null>(null);
   const restoringExpansion = useRef<string | null>(null);
-  const treeInteraction = useRef(false);
   const taxonCountCache = useRef(new Map<number, CachedTaxonCounts>());
 
   const publicResult = result?.tid === activeTid ? result : null;
@@ -253,6 +329,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         setRevealInTree(false);
       }
       if (tid !== activeTid) {
+        setSearchQuery(null);
         setActiveTid(tid);
         setRevealInTree(filterChanged ? false : 'lineage');
         if (!tid && !filterChanged) resetTree();
@@ -329,6 +406,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
         else destination.searchParams.set('tid', String(tid));
         window.history.replaceState(null, '', destination.href);
         setResult(null);
+        setSearchQuery(null);
         setRevealInTree(tid === null ? false : 'keep-open');
         setActiveTid(tid === null ? undefined : String(tid));
       } catch {
@@ -423,6 +501,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
 
   const openTaxon = useCallback((tid: string, reveal = false) => {
     if (!/^[1-9]\d*$/.test(tid)) return;
+    setSearchQuery(null);
     if (tid !== activeTid) {
       window.history.pushState(null, '', taxonLink(tid));
       setResult(null);
@@ -440,18 +519,10 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       pendingKeys.current?.delete(tid);
       return;
     }
-    // CoL calls this for both tree expansion and autocomplete selection.
-    const fromSearch = !treeInteraction.current;
-    if (fromSearch) setExpansionPlan([]);
-    openTaxon(tid, fromSearch);
+    openTaxon(tid);
   }, [openTaxon]);
 
-  const markTreeInteraction = useCallback((
-    event: KeyboardEvent<HTMLElement> | MouseEvent<HTMLElement>,
-  ) => {
-    const { target } = event;
-    treeInteraction.current = target instanceof Element && !!target.closest('[role="tree"]');
-  }, []);
+  const selectSearchTaxon = useCallback((tid: string) => openTaxon(tid, true), [openTaxon]);
 
   const taxonProfileLink = useCallback((tid: string) => {
     const api = new URL(apiUrl, window.location.href);
@@ -466,7 +537,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   }, [openTaxon]);
 
   const selectTreeRow = useCallback((event: MouseEvent<HTMLElement>) => {
-    markTreeInteraction(event);
     const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
     if (event.button !== 0 || modified) return;
     const { target } = event;
@@ -475,16 +545,15 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
     if (target.closest('.ant-tree-switcher:not(.ant-tree-switcher-noop)')) return;
     const row = target.closest('[role="treeitem"]');
     if (row) openTreeRow(row);
-  }, [markTreeInteraction, openTreeRow]);
+  }, [openTreeRow]);
 
   const selectTreeRowFromKeyboard = useCallback((event: KeyboardEvent<HTMLElement>) => {
-    markTreeInteraction(event);
     if (event.key !== ' ' || !(event.target instanceof Element)) return;
     if (!event.target.matches('[role="tree"]')) return;
     const rowId = event.target.getAttribute('aria-activedescendant');
     const row = rowId ? document.getElementById(rowId) : null;
     if (row && event.target.contains(row)) openTreeRow(row);
-  }, [markTreeInteraction, openTreeRow]);
+  }, [openTreeRow]);
 
   function followTaxonLink(event: MouseEvent<HTMLAnchorElement>, tid: string) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -534,6 +603,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           ...branchAnimation,
           minWidth: 0,
           overflowX: 'auto',
+          // CoL ties its built-in search value to tree expansion.
+          '& .catalogue-of-life .taxon-autocomplete': { display: 'none' },
           '& .ant-tree-treenode': { alignSelf: 'stretch' },
           '& .ant-tree-node-content-wrapper': { cursor: 'pointer', flex: 1 },
           '& .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected:not(:hover)': {
@@ -577,6 +648,14 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
             )}
           />
         </Stack>
+        <TaxonSearch
+          apiUrl={apiUrl}
+          datasetKey={datasetKey}
+          focusedName={selected?.name ?? ''}
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onSelect={selectSearchTaxon}
+        />
         <Tree
           key={`${datasetKey}-${treeVisit}`}
           datasetKey={datasetKey}
