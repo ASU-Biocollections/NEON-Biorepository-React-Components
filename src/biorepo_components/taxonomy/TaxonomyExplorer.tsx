@@ -37,6 +37,7 @@ interface TaxonDetail extends Taxon {
 type TaxonResult = { tid: string; taxon: TaxonDetail } | { tid: string; error: string };
 
 interface RecordPhoto {
+  occid?: number | null;
   url: string;
   thumbnailUrl: string | null;
   originalUrl?: string | null;
@@ -448,6 +449,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       const photos = entry ? [entry, ...(entry.alternates ?? [])] : [];
       const seen = new Set<string>();
       const candidates = photos.flatMap((photo) => {
+        if (typeof photo.occid !== 'number' || !Number.isSafeInteger(photo.occid) || photo.occid < 1) return [];
         const urls = [photo.thumbnailUrl, photo.url, photo.originalUrl];
         return urls.flatMap((src) => {
           if (!src || seen.has(src)) return [];
@@ -620,14 +622,22 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
           [`& ${nameStatusSelector}`]: { color: 'text.secondary', whiteSpace: 'nowrap' },
         }}
       >
-        <Stack direction="row" sx={{ flexWrap: 'wrap', columnGap: 2, mb: 1 }}>
+        <Stack direction="row" sx={{
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          columnGap: 2,
+          rowGap: 0.25,
+          mb: 1,
+          '& .MuiFormControlLabel-root': { m: 0, minHeight: 32, columnGap: 0.5 },
+          '& .MuiFormControlLabel-label': { typography: 'body2' },
+        }}>
           <FormControlLabel
-            label="Accepted names only"
+            label="Hide synonyms"
             control={(
               <Switch
                 name="accepted"
                 color="primary"
-                size="medium"
+                size="small"
                 checked={acceptedOnly}
                 onChange={changeTreeFilter}
                 slotProps={{ input: { role: 'switch' } }}
@@ -635,12 +645,12 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
             )}
           />
           <FormControlLabel
-            label="Only taxa with records"
+            label="Hide branches without records"
             control={(
               <Switch
                 name="records"
                 color="primary"
-                size="medium"
+                size="small"
                 checked={recordsOnly}
                 onChange={changeTreeFilter}
                 slotProps={{ input: { role: 'switch' } }}
