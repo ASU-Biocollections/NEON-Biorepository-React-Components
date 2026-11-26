@@ -3,7 +3,8 @@
 import React, {
   useCallback, useEffect, useId, useRef, useState,
 } from 'react';
-import type { SubmitEvent } from 'react';
+import type { CSSProperties } from 'react';
+import Slider from '@mui/material/Slider';
 import {
   messageFor, read, readTaxon, write,
 } from './TaxonomyEditorApi';
@@ -23,6 +24,7 @@ import {
 import TaxonomyEditorHistory, { runLabel } from './TaxonomyEditorHistory';
 import type { TaxonomyRun } from './TaxonomyEditorHistory';
 import TaxonomyEditorTree, { TaxonName } from './TaxonomyEditorTree';
+import TaxonomyEditorDatasetPicker from './TaxonomyEditorDatasetPicker';
 import TaxonomyExplorer from './TaxonomyExplorer';
 import styles from './TaxonomyEditor.module.css';
 
@@ -47,90 +49,10 @@ interface EditorProps {
   csrfToken: string;
 }
 
-interface SourcePickerProps {
-  apiUrl: string;
-  onSelect: (dataset: SourceDataset) => void;
-  onClose: () => void;
-}
-
 type Tab = (typeof tabs)[number];
+type AssemblyMode = 'modify' | 'sectors';
 type Dialog
-  = 'add-root' | 'add-child' | 'edit' | 'accepted-links' | 'unplace' | 'remap' | 'source';
-
-function SourcePicker({ apiUrl, onSelect, onClose }: SourcePickerProps) {
-  const [query, setQuery] = useState('');
-  const [items, setItems] = useState<SourceDataset[]>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  async function search(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (loading || !query.trim()) return;
-    setLoading(true);
-    setError('');
-    try {
-      const page = await read<Page<SourceDataset>>(apiUrl, 'source-datasets', {
-        q: query.trim(),
-      });
-      setItems(page.items);
-    } catch (err) {
-      setItems(undefined);
-      setError(messageFor(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <EditorDialog title="Find a source dataset" onClose={onClose}>
-      <div className={styles.form}>
-        <form className={styles.search} onSubmit={search}>
-          <input
-            type="search"
-            aria-label="ChecklistBank dataset name or key"
-            placeholder="Dataset name or key"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <button
-            type="submit"
-            className={styles.button}
-            disabled={loading || !query.trim()}
-          >
-            {loading ? 'Searching…' : 'Search'}
-          </button>
-        </form>
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
-        {items
-          && (items.length ? (
-            <ul className={styles.datasetList}>
-              {items.map((dataset) => (
-                <li key={dataset.datasetKey}>
-                  <button
-                    type="button"
-                    className={styles.nameButton}
-                    onClick={() => onSelect(dataset)}
-                  >
-                    {dataset.label}
-                    {' '}
-                    <span className={styles.muted}>
-                      {[dataset.version, dataset.datasetKey].filter(Boolean).join(' · ')}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className={styles.muted}>No datasets found.</p>
-          ))}
-      </div>
-    </EditorDialog>
-  );
-}
+  = 'add-root' | 'add-child' | 'edit' | 'accepted-links' | 'unplace' | 'remap';
 
 function titleForSector(sector: Sector) {
   return sector.rootName || (sector.rootTid ? `Taxon ${sector.rootTid}` : 'Backbone');
@@ -139,6 +61,8 @@ function titleForSector(sector: Sector) {
 export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorProps) {
   const groupId = useId();
   const [tab, setTab] = useState<Tab>('Assembly');
+  const [assemblyMode, setAssemblyMode] = useState<AssemblyMode>('modify');
+  const [assemblySplit, setAssemblySplit] = useState(50);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [selected, setSelected] = useState<BiorepoTaxon>();
   const [sourceDataset, setSourceDataset] = useState<SourceDataset>();
@@ -190,20 +114,25 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
     [apiUrl, sourceDataset?.datasetKey],
   );
   const searchSource = useCallback(
-    (q: string, offset: number, limit: number) => read<Page<EditorNode>>(apiUrl, 'source-search', {
+    (q: string, offset: number, limit: number, signal?: AbortSignal) => read<Page<EditorNode>>(apiUrl, 'source-search', {
       datasetKey: sourceDataset?.datasetKey,
       q,
       offset,
       limit,
+    }, { signal }),
+    [apiUrl, sourceDataset?.datasetKey],
+  );
+  const loadSourceLineage = useCallback(
+    (usageId: EditorNode['id']) => read<EditorNode[]>(apiUrl, 'source-lineage', {
+      datasetKey: sourceDataset?.datasetKey, usageId,
     }),
     [apiUrl, sourceDataset?.datasetKey],
   );
 
-  function selectDataset(dataset: SourceDataset, rootId?: string | null) {
+  function selectDataset(dataset?: SourceDataset, rootId?: string | null) {
     setSourceDataset(dataset);
     setSourceNode(undefined);
     setSourceRootId(rootId || undefined);
-    setDialog(null);
   }
 
   const loadSelected = useCallback((tid: number) => {
@@ -240,6 +169,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
 
   function openSector(sector: Sector) {
     selectDataset(sector, sector.sourceRootId);
+    setAssemblyMode('sectors');
     showTaxonInAssembly(sector.rootTid || null);
   }
 
@@ -270,7 +200,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
         'Source assignment saved. Refresh this sector to update its classification.',
       );
       refreshView();
-      setTab('Sectors');
+      if (!tid) setTab('Sectors');
     });
   }
 
@@ -362,10 +292,15 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
 
   const activeSector = selected && sectors?.find((sector) => sector.rootTid === selected.tid);
   const sourceTaxon = sourceNode?.name || sourceRootId;
-  const sourceButton = (
-    <button type="button" className={styles.button} onClick={() => setDialog('source')}>
-      Find dataset
-    </button>
+  const sectorTarget = selected && selected.acceptedTid === selected.tid && selected.status !== 'unplaced'
+    ? selected.tid : undefined;
+  const datasetPicker = (
+    <TaxonomyEditorDatasetPicker
+      apiUrl={apiUrl}
+      dataset={sourceDataset}
+      onSelect={selectDataset}
+      onClear={() => selectDataset()}
+    />
   );
 
   return (
@@ -428,9 +363,44 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
 
       {tab === 'Assembly' && (
         <>
-          <div className={styles.workspace}>
-            <section className={styles.panel} aria-label="Biorepository assembly">
-              <div className={styles.panelHeader}>
+          <div className={styles.assemblyControls}>
+            <div className={styles.assemblyModes} role="group" aria-label="Assembly mode">
+              <button
+                type="button"
+                className={styles.button}
+                aria-pressed={assemblyMode === 'modify'}
+                onClick={() => setAssemblyMode('modify')}
+              >
+                Modify tree
+              </button>
+              <button
+                type="button"
+                className={styles.button}
+                aria-pressed={assemblyMode === 'sectors'}
+                onClick={() => setAssemblyMode('sectors')}
+              >
+                Add sectors
+              </button>
+            </div>
+            <Slider
+              className={styles.assemblySlider}
+              size="small"
+              aria-label="Biorepository pane width"
+              valueLabelDisplay="auto"
+              valueLabelFormat={(value) => `${value}%`}
+              getAriaValueText={(value) => `${value}%`}
+              min={30}
+              max={70}
+              value={assemblySplit}
+              onChange={(_, value) => { if (typeof value === 'number') setAssemblySplit(value); }}
+            />
+          </div>
+          <div
+            className={styles.assemblyWorkspace}
+            style={{ '--assembly-left': `${assemblySplit}fr`, '--assembly-right': `${100 - assemblySplit}fr` } as CSSProperties}
+          >
+            <section className={styles.assemblyPane} aria-label="Biorepository assembly">
+              <div className={styles.assemblyHeading}>
                 <h2 className={styles.panelTitle}>Biorepository assembly</h2>
                 <div className={styles.actions}>
                   <button
@@ -447,44 +417,57 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                     disabled={busy}
                     onClick={refreshView}
                   >
-                    Reload tree
+                    Refresh tree
                   </button>
                 </div>
               </div>
-              <div className={styles.panelBody}>
-                <TaxonomyExplorer
-                  apiUrl={apiUrl}
-                  colApiUrl={colApiUrl}
-                  editorTree={{ revision, navigationVersion, onSelectionChange: selectTaxon }}
-                />
-              </div>
-            </section>
-            {sourceDataset ? (
-              <TaxonomyEditorTree
-                key={sourceDataset.datasetKey}
-                title={sourceDataset.label}
-                loadChildren={loadSource}
-                search={searchSource}
-                selected={sourceNode?.id ?? sourceRootId}
-                onSelect={(node) => {
-                  setSourceNode(node);
-                  setSourceRootId(String(node.id));
-                }}
-                actions={sourceButton}
+              <TaxonomyExplorer
+                apiUrl={apiUrl}
+                colApiUrl={colApiUrl}
+                editorTree={{ revision, navigationVersion, onSelectionChange: selectTaxon }}
               />
-            ) : (
-              <section className={styles.panel} aria-label="Source taxonomy">
-                <div className={styles.panelHeader}>
-                  <h2 className={styles.panelTitle}>Source taxonomy</h2>
-                  {sourceButton}
+            </section>
+            <section className={`${styles.assemblyPane} ${styles.assemblySource}`} aria-label="Source taxonomy">
+              <div className={styles.assemblyHeading}>
+                <div className={styles.actions}>
+                  <h2 className={styles.panelTitle}>{sourceDataset?.label ?? 'Source taxonomy'}</h2>
+                  {sourceDataset && (
+                    <a
+                      href={`https://www.checklistbank.org/dataset/${encodeURIComponent(sourceDataset.datasetKey)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View source
+                    </a>
+                  )}
                 </div>
-                <div className={styles.panelBody}>
-                  <p className={styles.muted}>
-                    Choose a ChecklistBank dataset to browse its classification.
-                  </p>
-                </div>
-              </section>
-            )}
+                {assemblyMode === 'sectors' && (
+                  <button
+                    type="button"
+                    className={styles.primary}
+                    disabled={busy || !sourceDataset || sectorTarget === undefined}
+                    onClick={() => { if (sectorTarget !== undefined) saveSource(sectorTarget); }}
+                  >
+                    {activeSector ? 'Update sector' : 'Add sector'}
+                  </button>
+                )}
+              </div>
+              {datasetPicker}
+              {sourceDataset && (
+                <TaxonomyEditorTree
+                  key={sourceDataset.datasetKey}
+                  loadChildren={loadSource}
+                  loadLineage={loadSourceLineage}
+                  search={searchSource}
+                  selected={sourceNode?.id ?? sourceRootId}
+                  selectedName={sourceNode?.name}
+                  onSelect={(node) => {
+                    setSourceNode(node);
+                    setSourceRootId(String(node.id));
+                  }}
+                />
+              )}
+            </section>
           </div>
           {selected && (
             <section
@@ -493,7 +476,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
             >
               <div className={styles.actions}>
                 <div>
-                  <TaxonName node={selected} />
+                  <TaxonName node={selected} italicize />
                   {selected.source && <p className={styles.muted}>{selected.source}</p>}
                   {selected.editorialOverride && (
                     <p className={styles.muted}>Manual classification</p>
@@ -505,7 +488,7 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                     </p>
                   )}
                 </div>
-                <div className={styles.actions}>
+                {assemblyMode === 'modify' && <div className={styles.actions}>
                   <button
                     type="button"
                     className={styles.button}
@@ -554,9 +537,9 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                   >
                     Remap specimens
                   </button>
-                </div>
+                </div>}
               </div>
-              {selected.editorialOverride && (
+              {assemblyMode === 'modify' && selected.editorialOverride && (
                 <div>
                   <button
                     type="button"
@@ -568,38 +551,24 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
                   </button>
                 </div>
               )}
-              {sourceDataset && (
+              {assemblyMode === 'sectors' && sourceDataset && (
                 <div className={styles.actions}>
                   <p className={styles.muted}>
                     {sourceTaxon ? `Source taxon · ${sourceTaxon}`
                       : 'The source taxon will be matched by scientific name.'}
                   </p>
-                  <div className={styles.actions}>
-                    {sourceRootId && (
-                      <button
-                        type="button"
-                        className={styles.button}
-                        onClick={() => {
-                          setSourceRootId(undefined);
-                          setSourceNode(undefined);
-                        }}
-                      >
-                        Clear source taxon
-                      </button>
-                    )}
+                  {sourceRootId && (
                     <button
                       type="button"
-                      className={styles.primary}
-                      disabled={
-                        busy
-                        || selected.acceptedTid !== selected.tid
-                        || selected.status === 'unplaced'
-                      }
-                      onClick={() => saveSource(selected.tid)}
+                      className={styles.button}
+                      onClick={() => {
+                        setSourceRootId(undefined);
+                        setSourceNode(undefined);
+                      }}
                     >
-                      Save sector
+                      Clear source taxon
                     </button>
-                  </div>
+                  )}
                 </div>
               )}
             </section>
@@ -698,9 +667,9 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
           <section className={styles.panel} aria-label="ChecklistBank data sources">
             <div className={styles.panelHeader}>
               <h2 className={styles.panelTitle}>ChecklistBank sources</h2>
-              {sourceButton}
             </div>
             <div className={styles.panelBody}>
+              {datasetPicker}
               {sectors && (
                 <div>
                   <p className={styles.muted}>Current backbone</p>
@@ -791,13 +760,6 @@ export default function TaxonomyEditor({ apiUrl, colApiUrl, csrfToken }: EditorP
         />
       )}
 
-      {dialog === 'source' && (
-        <SourcePicker
-          apiUrl={apiUrl}
-          onSelect={(dataset) => selectDataset(dataset)}
-          onClose={() => setDialog(null)}
-        />
-      )}
       {dialog === 'remap' && selected && (
         <RemapDialog
           apiUrl={apiUrl}

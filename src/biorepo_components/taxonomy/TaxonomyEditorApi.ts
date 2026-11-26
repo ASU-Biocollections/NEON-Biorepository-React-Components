@@ -50,7 +50,7 @@ async function request<T>(url: URL, options?: RequestInit): Promise<T> {
   return payload.data as T;
 }
 
-export function read<T>(apiUrl: string, action: string, fields: Params = {}) {
+export function read<T>(apiUrl: string, action: string, fields: Params = {}, options?: RequestInit) {
   const url = new URL(apiUrl, window.location.href);
   url.searchParams.set('action', action);
   Object.entries(fields).forEach(([key, value]) => {
@@ -58,7 +58,7 @@ export function read<T>(apiUrl: string, action: string, fields: Params = {}) {
       url.searchParams.set(key, String(value));
     }
   });
-  return request<T>(url);
+  return request<T>(url, options);
 }
 
 export function write<T>(

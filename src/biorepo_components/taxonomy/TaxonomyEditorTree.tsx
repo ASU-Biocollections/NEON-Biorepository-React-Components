@@ -1,23 +1,47 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
-import type { SubmitEvent, ReactNode } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import Cancel from '@mui/icons-material/Cancel';
+import { Autocomplete, TextField } from '@mui/material';
 import { messageFor } from './TaxonomyEditorApi';
 import type { EditorNode, Page } from './TaxonomyEditorApi';
 import styles from './TaxonomyEditor.module.css';
 
-const PAGE_SIZE = 50;
+const pageSize = 50;
+const italicRanks = new Set([
+  'genus', 'subgenus', 'section', 'subsection', 'species', 'subspecies',
+  'variety', 'subvariety', 'form', 'subform',
+]);
 
-interface TreeProps<T extends EditorNode> {
-  title: string;
-  actions?: ReactNode;
-  loadChildren: (parent: T['id'] | null, offset: number, limit: number) => Promise<Page<T>>;
-  search: (query: string, offset: number, limit: number) => Promise<Page<T>>;
-  selected: T['id'] | undefined;
-  onSelect: (node: T) => void;
+type NodeId = EditorNode['id'];
+
+interface TreeProps {
+  loadChildren: (parent: NodeId | null, offset: number, limit: number) => Promise<Page<EditorNode>>;
+  loadLineage: (id: NodeId) => Promise<EditorNode[]>;
+  search: (query: string, offset: number, limit: number, signal?: AbortSignal) => Promise<Page<EditorNode>>;
+  selected: NodeId | undefined;
+  selectedName?: string;
+  onSelect: (node: EditorNode) => void;
 }
 
-export function TaxonName({ node }: { node: EditorNode }) {
+interface BranchPage extends Page<EditorNode> {
+  offset: number;
+}
+
+interface Branch {
+  page?: BranchPage;
+  loading?: boolean;
+  error?: string;
+}
+
+interface SearchResult {
+  term: string;
+  items: EditorNode[];
+  error?: string;
+}
+
+export function TaxonName({ node, italicize = false }: { node: EditorNode; italicize?: boolean }) {
   return (
     <>
       {node.rank && (
@@ -26,7 +50,9 @@ export function TaxonName({ node }: { node: EditorNode }) {
           {' '}
         </span>
       )}
-      <span>{node.name}</span>
+      {italicize && italicRanks.has(node.rank?.toLowerCase() ?? '')
+        ? <i>{node.name}</i>
+        : <span>{node.name}</span>}
       {node.author && (
         <span className={styles.author}>
           {' '}
@@ -38,241 +64,319 @@ export function TaxonName({ node }: { node: EditorNode }) {
   );
 }
 
-function branchKey(parent: string | number | null) {
+function branchKey(parent: NodeId | null) {
   return parent === null ? 'root' : `taxon:${parent}`;
 }
 
-export default function TaxonomyEditorTree<T extends EditorNode>({
-  title,
-  actions,
+function nameForOption(node: EditorNode) {
+  return [node.name, node.author].filter(Boolean).join(' ');
+}
+
+function scrollToSelected(root: HTMLDivElement | null) {
+  const selected = root?.querySelector('button[aria-pressed="true"]');
+  if (!root || !selected) return;
+  const pane = root.getBoundingClientRect();
+  const row = selected.getBoundingClientRect();
+  if (row.top < pane.top) root.scrollTop += row.top - pane.top;
+  else if (row.bottom > pane.bottom) root.scrollTop += row.bottom - pane.bottom;
+}
+
+export default function TaxonomyEditorTree({
   loadChildren,
+  loadLineage,
   search,
   selected,
+  selectedName,
   onSelect,
-}: TreeProps<T>) {
-  const [pages, setPages] = useState<Record<string, Page<T>>>({});
-  const [loading, setLoading] = useState<Record<string, boolean>>({ root: true });
-  const [open, setOpen] = useState<Set<T['id']>>(new Set());
-  const [query, setQuery] = useState('');
-  const [searched, setSearched] = useState('');
-  const [results, setResults] = useState<Page<T>>();
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState('');
+}: TreeProps) {
+  const [branches, setBranches] = useState<Record<string, Branch>>({});
+  const branchCache = useRef<Record<string, Branch>>({});
+  const pendingPages = useRef(new Map<string, Promise<BranchPage | undefined>>());
+  const generation = useRef(0);
+  const [open, setOpen] = useState<Set<NodeId>>(new Set());
+  const [extraNodes, setExtraNodes] = useState<Record<string, EditorNode>>({});
+  const [selectedNode, setSelectedNode] = useState<EditorNode>();
+  const [query, setQuery] = useState<string | null>(null);
+  const [result, setResult] = useState<SearchResult>();
+  const [revealAttempt, setRevealAttempt] = useState(0);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState('');
+  const revealSequence = useRef(0);
+  const tree = useRef<HTMLDivElement>(null);
+  const term = query?.trim() ?? '';
+  const matching = result?.term === term ? result : undefined;
+  const focusedName = selectedName ?? (selectedNode?.id === selected ? selectedNode?.name : undefined) ?? '';
 
-  const load = useCallback(
-    async (parent: T['id'] | null, offset = 0) => {
-      const key = branchKey(parent);
-      setLoading((previous) => ({ ...previous, [key]: true }));
-      setError('');
-      try {
-        const response = await loadChildren(parent, offset, PAGE_SIZE);
-        setPages((previous) => ({
-          ...previous,
-          [key]: {
-            total: response.total,
-            items: offset
-              ? [...(previous[key]?.items ?? []), ...response.items]
-              : response.items,
-          },
-        }));
-      } catch (err) {
-        setError(messageFor(err));
-      } finally {
-        setLoading((previous) => ({ ...previous, [key]: false }));
-      }
-    },
-    [loadChildren],
-  );
+  const setBranch = useCallback((key: string, branch: Branch) => {
+    const next = { ...branchCache.current, [key]: branch };
+    branchCache.current = next;
+    setBranches(next);
+  }, []);
+
+  const loadPage = useCallback((parent: NodeId | null) => {
+    const key = branchKey(parent);
+    const pending = pendingPages.current.get(key);
+    if (pending) return pending;
+    const previous = branchCache.current[key]?.page;
+    const offset = previous?.offset ?? 0;
+    const currentGeneration = generation.current;
+    setBranch(key, { page: previous, loading: true });
+    const request = Promise.resolve().then(() => loadChildren(parent, offset, pageSize))
+      .then((page) => {
+        if (currentGeneration !== generation.current) return undefined;
+        const items = new Map((previous?.items ?? []).map((node) => [node.id, node]));
+        page.items.forEach((node) => items.set(node.id, node));
+        const next = {
+          items: [...items.values()],
+          total: page.total,
+          offset: page.items.length ? offset + page.items.length : page.total,
+        };
+        setBranch(key, { page: next });
+        return next;
+      })
+      .catch((error) => {
+        if (currentGeneration === generation.current) {
+          setBranch(key, { page: previous, error: messageFor(error) });
+        }
+        return undefined;
+      })
+      .finally(() => {
+        if (currentGeneration === generation.current) pendingPages.current.delete(key);
+      });
+    pendingPages.current.set(key, request);
+    return request;
+  }, [loadChildren, setBranch]);
 
   useEffect(() => {
-    let active = true;
-    queueMicrotask(() => { if (active) load(null); });
-    return () => { active = false; };
-  }, [load]);
+    void loadPage(null);
+    return () => {
+      generation.current += 1;
+      pendingPages.current.clear();
+      branchCache.current = {};
+    };
+  }, [loadPage]);
 
-  function toggle(node: T) {
-    const next = new Set(open);
-    if (next.has(node.id)) next.delete(node.id);
-    else {
-      next.add(node.id);
-      if (!pages[branchKey(node.id)] && !loading[branchKey(node.id)]) load(node.id);
+  useEffect(() => {
+    if (term.length < 2) return undefined;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const page = await search(term, 0, pageSize, controller.signal);
+        if (!controller.signal.aborted) setResult({ term, items: page.items });
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setResult({ term, items: [], error: messageFor(error) });
+        }
+      }
+    }, 350);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [search, term]);
+
+  useEffect(() => {
+    setQuery(null);
+  }, [selected]);
+
+  useEffect(() => {
+    if (selected === undefined) {
+      setExtraNodes({});
+      setRevealError('');
+      setRevealing(false);
+      return undefined;
     }
-    setOpen(next);
+    const current = ++revealSequence.current;
+    const isCurrent = () => current === revealSequence.current;
+    const id = selected;
+    const target = tree.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+
+    setRevealError('');
+    if (target && target.dataset.taxonId === String(id)) {
+      setRevealing(false);
+      return undefined;
+    }
+
+    async function reveal() {
+      setRevealing(true);
+      try {
+        const lineage = await loadLineage(id);
+        const node = lineage.at(-1);
+        if (!isCurrent()) return;
+        if (!node || node.id !== id) throw new Error('This name could not be located in the source tree.');
+        setSelectedNode(node);
+        const additions: Record<string, EditorNode> = {};
+        let parent: NodeId | null = null;
+        for (const ancestor of lineage) {
+          const key = branchKey(parent);
+          let page = branchCache.current[key]?.page ?? await loadPage(parent);
+          if (!isCurrent()) return;
+          if (!page) throw new Error('The selected branch could not be loaded.');
+          // Source child lists omit synonyms. Add a selected synonym from its authoritative path.
+          if (!ancestor.status?.toLowerCase().includes('synonym')) {
+            while (!page.items.some((entry) => entry.id === ancestor.id) && page.offset < page.total) {
+              page = await loadPage(parent);
+              if (!isCurrent()) return;
+              if (!page) throw new Error('The selected branch could not be loaded.');
+            }
+          }
+          if (!page.items.some((entry) => entry.id === ancestor.id)) additions[key] = ancestor;
+          parent = ancestor.id;
+        }
+        setExtraNodes(additions);
+        setOpen((branchesOpen) => new Set([...branchesOpen, ...lineage.slice(0, -1).map(({ id: key }) => key)]));
+      } catch (error) {
+        if (isCurrent()) setRevealError(messageFor(error));
+      } finally {
+        if (isCurrent()) setRevealing(false);
+      }
+    }
+
+    void reveal();
+    return () => {
+      revealSequence.current += 1;
+    };
+  }, [loadLineage, loadPage, revealAttempt, selected]);
+
+  useEffect(() => {
+    if (!revealing) scrollToSelected(tree.current);
+  }, [revealing, selected]);
+
+  function selectNode(node: EditorNode) {
+    setSelectedNode(node);
+    setQuery(null);
+    if (node.id === selected) setRevealAttempt((count) => count + 1);
+    onSelect(node);
   }
 
-  async function searchNames(text: string, offset = 0) {
-    const value = text.trim();
-    if (!value) {
-      setSearched('');
-      setResults(undefined);
-      return;
-    }
-    setSearching(true);
-    setError('');
-    try {
-      const response = await search(value, offset, PAGE_SIZE);
-      setSearched(value);
-      setResults((previous) => ({
-        total: response.total,
-        items: offset ? [...(previous?.items ?? []), ...response.items] : response.items,
-      }));
-    } catch (err) {
-      setError(messageFor(err));
-    } finally {
-      setSearching(false);
+  function toggle(node: EditorNode) {
+    const key = branchKey(node.id);
+    if (open.has(node.id)) {
+      // An explicit collapse takes precedence over a search reveal still in progress.
+      revealSequence.current += 1;
+      setRevealing(false);
+      setOpen((current) => new Set([...current].filter((id) => id !== node.id)));
+    } else {
+      setOpen((current) => new Set([...current, node.id]));
+      if (!branchCache.current[key]?.page) void loadPage(node.id);
     }
   }
 
-  function submitSearch(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault();
-    searchNames(query);
-  }
-
-  function renderNodes(
-    parent: T['id'] | null,
-    ancestors: ReadonlySet<T['id']> = new Set(),
-  ): ReactNode {
+  function renderNodes(parent: NodeId | null, ancestors: ReadonlySet<NodeId> = new Set()): ReactNode {
     const key = branchKey(parent);
-    const page = pages[key];
-    const isLoading = loading[key];
+    const branch = branches[key];
+    const page = branch?.page;
+    if (!page && !branch?.error) return <div className={styles.muted} role="status">Loading…</div>;
 
-    if (!page) {
-      return isLoading ? (
-        <div className={styles.muted} role="status">
-          Loading…
-        </div>
-      ) : (
-        <button type="button" className={styles.button} onClick={() => load(parent)}>
-          Reload names
-        </button>
-      );
-    }
-    if (!page.items.length) return <div className={styles.muted}>No taxa to display.</div>;
-
+    const extra = extraNodes[key];
+    const items = page?.items ?? [];
+    const nodes = extra && !items.some(({ id }) => id === extra.id) ? [...items, extra] : items;
     return (
-      <ul className={styles.treeList}>
-        {page.items
-          .filter((node) => !ancestors.has(node.id))
-          .map((node) => (
-            <li key={node.id}>
-              <div className={styles.treeRow}>
-                {node.hasChildren ? (
+      <>
+        {branch?.error && <p className={styles.error} role="alert">{branch.error}</p>}
+        {!!nodes.length && (
+          <ul className={styles.treeList}>
+            {nodes.filter(({ id }) => !ancestors.has(id)).map((node) => (
+              <li key={node.id}>
+                <div className={styles.treeRow}>
+                  {node.hasChildren || open.has(node.id) ? (
+                    <button
+                      type="button"
+                      className={styles.expand}
+                      aria-expanded={open.has(node.id)}
+                      aria-label={`${open.has(node.id) ? 'Collapse' : 'Expand'} ${node.name}`}
+                      onClick={() => toggle(node)}
+                    >
+                      <span aria-hidden="true">{open.has(node.id) ? '▾' : '▸'}</span>
+                    </button>
+                  ) : <span className={styles.treeSpacer} />}
                   <button
                     type="button"
-                    className={styles.expand}
-                    aria-expanded={open.has(node.id)}
-                    aria-label={`${open.has(node.id) ? 'Collapse' : 'Expand'} ${node.name}`}
-                    onClick={() => toggle(node)}
+                    className={styles.nameButton}
+                    data-taxon-id={node.id}
+                    aria-pressed={selected === node.id}
+                    onClick={() => selectNode(node)}
                   >
-                    <span aria-hidden="true">{open.has(node.id) ? '▾' : '▸'}</span>
+                    <TaxonName node={node} italicize />
                   </button>
-                ) : (
-                  <span className={styles.treeSpacer} />
-                )}
-                <button
-                  type="button"
-                  className={styles.nameButton}
-                  aria-pressed={selected === node.id}
-                  onClick={() => onSelect(node)}
-                >
-                  <TaxonName node={node} />
-                </button>
-              </div>
-              {node.hasChildren && open.has(node.id) && (
-                <div className={styles.branch}>
-                  {renderNodes(node.id, new Set([...ancestors, node.id]))}
                 </div>
-              )}
-            </li>
-          ))}
-        {page.items.length < page.total && (
-          <li>
-            <button
-              type="button"
-              className={styles.button}
-              disabled={isLoading}
-              onClick={() => load(parent, page.items.length)}
-            >
-              {isLoading ? 'Loading…' : 'More names'}
-            </button>
-          </li>
+                {open.has(node.id) && (
+                  <div className={styles.branch}>
+                    {renderNodes(node.id, new Set([...ancestors, node.id]))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
-      </ul>
-    );
-  }
-
-  function renderResults(page: Page<T>) {
-    if (!page.items.length) return <p className={styles.muted}>No names found.</p>;
-    return (
-      <ul className={styles.treeList}>
-        {page.items.map((node) => (
-          <li key={node.id}>
-            <button
-              type="button"
-              className={styles.nameButton}
-              aria-pressed={selected === node.id}
-              onClick={() => onSelect(node)}
-            >
-              <TaxonName node={node} />
-            </button>
-          </li>
-        ))}
-        {page.items.length < page.total && (
-          <li>
-            <button
-              type="button"
-              className={styles.button}
-              disabled={searching}
-              onClick={() => searchNames(searched, page.items.length)}
-            >
-              {searching ? 'Searching…' : 'More results'}
-            </button>
-          </li>
+        {page && !nodes.length && !branch?.error && <p className={styles.muted}>No taxa to display.</p>}
+        {(branch?.error || (page && page.offset < page.total)) && (
+          <button
+            type="button"
+            className={styles.button}
+            disabled={branch?.loading}
+            onClick={() => void loadPage(parent)}
+          >
+            {branch?.loading ? 'Loading…' : branch?.error ? 'Retry' : 'More names'}
+          </button>
         )}
-      </ul>
+      </>
     );
   }
 
   return (
-    <section className={styles.panel} aria-label={title}>
-      <div className={styles.panelHeader}>
-        <h2 className={styles.panelTitle}>{title}</h2>
-        <div className={styles.actions}>{actions}</div>
-      </div>
-      <form className={styles.search} onSubmit={submitSearch}>
-        <input
-          type="search"
-          placeholder="Find a taxon"
-          aria-label={`Find a taxon in ${title}`}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <button type="submit" className={styles.button} disabled={searching}>
-          Search
-        </button>
-        {results && (
-          <button
-            type="button"
-            className={styles.button}
-            onClick={() => {
-              setQuery('');
-              setSearched('');
-              setResults(undefined);
+    <>
+      <Autocomplete
+        freeSolo
+        fullWidth
+        size="small"
+        clearText="Clear source taxon search"
+        clearIcon={<Cancel sx={{ fontSize: 14 }} />}
+        options={matching?.items ?? []}
+        value={null}
+        inputValue={query ?? focusedName}
+        filterOptions={(options) => options}
+        getOptionLabel={(option) => typeof option === 'string' ? option : nameForOption(option)}
+        getOptionKey={(option) => typeof option === 'string' ? option : option.id}
+        onInputChange={(_, value, reason) => {
+          if (reason === 'input' || reason === 'clear') setQuery(value);
+        }}
+        onChange={(_, option) => {
+          if (option && typeof option !== 'string') selectNode(option);
+        }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            placeholder="Find taxon"
+            slotProps={{
+              ...params.slotProps,
+              htmlInput: { ...params.slotProps.htmlInput, 'aria-label': 'Find a source taxon' },
             }}
-            disabled={searching}
-          >
-            Back to tree
-          </button>
+          />
         )}
-      </form>
-      {error && (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      )}
-      <div className={styles.treeScroll} aria-busy={searching || loading.root}>
-        {results ? renderResults(results) : renderNodes(null)}
+        sx={{
+          '& .MuiOutlinedInput-root.MuiInputBase-sizeSmall': {
+            borderRadius: '4px',
+            minHeight: 34,
+            py: 0,
+            fontSize: '0.875rem',
+          },
+          '& .MuiAutocomplete-inputRoot .MuiAutocomplete-input': { py: '5px' },
+          '& .MuiAutocomplete-clearIndicator': {
+            visibility: 'visible',
+            color: 'text.secondary',
+          },
+        }}
+      />
+      {term.length >= 2 && (matching
+        ? matching.error
+          ? <p className={styles.error} role="alert">{matching.error}</p>
+          : !matching.items.length && <p className={styles.muted} role="status">No matching taxa.</p>
+        : <p className={styles.muted} role="status">Searching…</p>)}
+      {revealError && <p className={styles.error} role="alert">{revealError}</p>}
+      <div ref={tree} className={styles.treeScroll} aria-busy={revealing || branches.root?.loading}>
+        {renderNodes(null)}
       </div>
-    </section>
+    </>
   );
 }
