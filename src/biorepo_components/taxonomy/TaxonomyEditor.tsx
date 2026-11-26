@@ -383,15 +383,11 @@ export default function TaxonomyEditor({ apiUrl, csrfToken }: EditorProps) {
             </button>
           ))}
         </nav>
-        <div className={styles.actions}>
-          {version !== undefined && (
-            <span className={styles.muted}>
-              Version
-              {version}
-            </span>
-          )}
-          <a href="./index.php">Public explorer</a>
-        </div>
+        {version !== undefined && (
+          <span className={styles.muted}>
+            Version {version}
+          </span>
+        )}
       </div>
 
       {error && (
