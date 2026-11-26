@@ -47,15 +47,15 @@ type RecordPhotoResponse = RecordPhoto & { alternates?: RecordPhoto[] };
 type PhotoCandidate = { photo: RecordPhoto; src: string };
 type PhotoResult = { tid: number; candidates: PhotoCandidate[] };
 
-type RecordCountResult = { tid: number; count: number };
-type CachedRecordCount = { count: number; expiresAt: number };
+type TaxonCountResult = { tid: number; count: number };
+type CachedTaxonCount = { count: number; expiresAt: number };
 type RevealMode = false | 'lineage' | 'keep-open';
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
-const speciesCountSelector = '.neon-taxonomy-species-count';
+const taxonCountSelector = ':is(.neon-taxonomy-terminal-count, .neon-taxonomy-species-count)';
 const nameStatusSelector = '.neon-taxonomy-name-status';
 const scientificNameSelector = '.neon-taxonomy-scientific-name';
-const recordCountTtlMs = 60_000;
+const taxonCountTtlMs = 60_000;
 const descendantRowSelector = '[role="treeitem"]:has(.ant-tree-indent-unit)';
 const caretSelector = '.catalogue-of-life .ant-tree .ant-tree-switcher-icon svg';
 const branchAnimation = {
@@ -132,13 +132,15 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
-  const [recordResult, setRecordResult] = useState<RecordCountResult | null>(null);
+  const [recordResult, setRecordResult] = useState<TaxonCountResult | null>(null);
+  const [imageResult, setImageResult] = useState<TaxonCountResult | null>(null);
   const treeSection = useRef<HTMLElement>(null);
   const expandedKeys = useRef(new Set<string>());
   const pendingKeys = useRef<Set<string> | null>(null);
   const restoringExpansion = useRef<string | null>(null);
   const treeInteraction = useRef(false);
-  const recordCountCache = useRef(new Map<number, CachedRecordCount>());
+  const recordCountCache = useRef(new Map<number, CachedTaxonCount>());
+  const imageCountCache = useRef(new Map<number, CachedTaxonCount>());
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
@@ -147,6 +149,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const photoCandidate = photoResult?.tid === detailTid ? photoResult?.candidates[0] : null;
   const photo = photoCandidate?.photo;
   const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
+  const imageCount = imageResult?.tid === detailTid ? imageResult?.count : undefined;
+  const hasGalleryImages = imageCount !== undefined && imageCount > 0;
   const datasetKey = (acceptedOnly ? 1 : 3) + Number(recordsOnly);
 
   const rememberExpansion = useCallback(() => {
@@ -358,6 +362,24 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       }
     }
 
+    function loadCount(
+      action: string,
+      cache: Map<number, CachedTaxonCount>,
+      setCount: (result: TaxonCountResult) => void,
+    ) {
+      const cached = cache.get(tid);
+      if (cached && cached.expiresAt > Date.now()) {
+        queueMicrotask(() => {
+          if (!controller.signal.aborted) setCount({ tid, count: cached.count });
+        });
+        return;
+      }
+      loadRecordData<{ count: number }>(action, ({ count }) => {
+        cache.set(tid, { count, expiresAt: Date.now() + taxonCountTtlMs });
+        setCount({ tid, count });
+      });
+    }
+
     loadRecordData<RecordPhotoResponse | null>('taxon-photo', (entry) => {
       const photos = entry ? [entry, ...(entry.alternates ?? [])] : [];
       const seen = new Set<string>();
@@ -371,17 +393,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       });
       setPhotoResult({ tid, candidates });
     });
-    const cached = recordCountCache.current.get(tid);
-    if (cached && cached.expiresAt > Date.now()) {
-      queueMicrotask(() => {
-        if (!controller.signal.aborted) setRecordResult({ tid, count: cached.count });
-      });
-    } else {
-      loadRecordData<{ count: number }>('taxon-records', ({ count }) => {
-        recordCountCache.current.set(tid, { count, expiresAt: Date.now() + recordCountTtlMs });
-        setRecordResult({ tid, count });
-      });
-    }
+    loadCount('taxon-records', recordCountCache.current, setRecordResult);
+    loadCount('taxon-images', imageCountCache.current, setImageResult);
     return () => controller.abort();
   }, [apiUrl, activeTid]);
 
@@ -536,7 +549,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
             },
           }),
           [`& ${scientificNameSelector}`]: { color: 'primary.main' },
-          [`& ${speciesCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
+          [`& ${taxonCountSelector}`]: { color: 'text.primary', whiteSpace: 'nowrap' },
           [`& ${nameStatusSelector}`]: { color: 'text.secondary', whiteSpace: 'nowrap' },
         }}
       >
@@ -660,34 +673,40 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                   </Button>
                 </Stack>
               </Box>
-              {photo && photoCandidate && (
-                <Box component="figure" sx={{ ...detailSectionStyle, m: 0 }}>
-                  <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
-                    Image
-                  </Typography>
-                  <Box
-                    component="img"
-                    key={photoCandidate.src}
-                    src={photoCandidate.src}
-                    alt={photo.caption || 'Photo from a specimen record'}
-                    onError={handlePhotoError}
-                    sx={{
-                      display: 'block',
-                      width: '100%',
-                      maxHeight: 224,
-                      objectFit: 'contain',
-                      borderRadius: 1,
-                    }}
-                  />
+              {(photo || hasGalleryImages) && (
+                <Box component={photo ? 'figure' : 'div'} sx={{ ...detailSectionStyle, m: 0 }}>
+                  {photo && photoCandidate && (
+                    <>
+                      <Typography variant="subtitle2" component="h3" sx={{ mb: 1 }}>
+                        Image
+                      </Typography>
+                      <Box
+                        component="img"
+                        key={photoCandidate.src}
+                        src={photoCandidate.src}
+                        alt={photo.caption || 'Photo from a specimen record'}
+                        onError={handlePhotoError}
+                        sx={{
+                          display: 'block',
+                          width: '100%',
+                          maxHeight: 224,
+                          objectFit: 'contain',
+                          borderRadius: 1,
+                        }}
+                      />
+                    </>
+                  )}
                   <Button
-                    href={recordsListLink(apiUrl, selected, 'gallery')}
+                    href={imageCount === 0 ? undefined : recordsListLink(apiUrl, selected, 'gallery')}
+                    disabled={imageCount === 0}
                     variant="outlined"
                     size="medium"
                     fullWidth
                     endIcon={<ImageOutlined />}
-                    sx={{ mt: 2 }}
+                    sx={{ mt: photo ? 2 : 0 }}
                   >
-                    Browse images
+                    Browse {imageCount !== undefined && `${imageCount.toLocaleString()} `}
+                    {imageCount === 1 ? 'Image' : 'Images'}
                   </Button>
                 </Box>
               )}
@@ -708,7 +727,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
               {otherSynonyms.length > 0 && (
                 <Box sx={detailSectionStyle}>
                   <Typography variant="subtitle2" component="h3" sx={{ mb: 0.75 }}>
-                    Synonyms
+                    Synonym(s)
                   </Typography>
                   <Stack component="ul" spacing={0.5} sx={{ listStyle: 'none', m: 0, p: 0 }}>
                     {otherSynonyms.map((synonym) => (
