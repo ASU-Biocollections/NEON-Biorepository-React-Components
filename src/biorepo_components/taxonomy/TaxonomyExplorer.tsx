@@ -47,8 +47,9 @@ type RecordPhotoResponse = RecordPhoto & { alternates?: RecordPhoto[] };
 type PhotoCandidate = { photo: RecordPhoto; src: string };
 type PhotoResult = { tid: number; candidates: PhotoCandidate[] };
 
-type TaxonCountResult = { tid: number; count: number };
-type CachedTaxonCount = { count: number; expiresAt: number };
+type TaxonCounts = { count: number; imageCount?: number };
+type TaxonCountResult = { tid: number; counts: TaxonCounts };
+type CachedTaxonCounts = { counts: TaxonCounts; expiresAt: number };
 type RevealMode = false | 'lineage' | 'keep-open';
 
 const detailSectionStyle = { px: 2.5, py: 1.75 };
@@ -132,15 +133,13 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const [expansionPlan, setExpansionPlan] = useState<string[]>([]);
   const [result, setResult] = useState<TaxonResult | null>(null);
   const [photoResult, setPhotoResult] = useState<PhotoResult | null>(null);
-  const [recordResult, setRecordResult] = useState<TaxonCountResult | null>(null);
-  const [imageResult, setImageResult] = useState<TaxonCountResult | null>(null);
+  const [countResult, setCountResult] = useState<TaxonCountResult | null>(null);
   const treeSection = useRef<HTMLElement>(null);
   const expandedKeys = useRef(new Set<string>());
   const pendingKeys = useRef<Set<string> | null>(null);
   const restoringExpansion = useRef<string | null>(null);
   const treeInteraction = useRef(false);
-  const recordCountCache = useRef(new Map<number, CachedTaxonCount>());
-  const imageCountCache = useRef(new Map<number, CachedTaxonCount>());
+  const taxonCountCache = useRef(new Map<number, CachedTaxonCounts>());
 
   const publicResult = result?.tid === activeTid ? result : null;
   const selected = publicResult && 'taxon' in publicResult ? publicResult.taxon : null;
@@ -148,8 +147,8 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
   const detailTid = selected?.tid;
   const photoCandidate = photoResult?.tid === detailTid ? photoResult?.candidates[0] : null;
   const photo = photoCandidate?.photo;
-  const recordCount = recordResult?.tid === detailTid ? recordResult?.count : undefined;
-  const imageCount = imageResult?.tid === detailTid ? imageResult?.count : undefined;
+  const counts = countResult?.tid === detailTid ? countResult?.counts : undefined;
+  const { count: recordCount, imageCount } = counts ?? {};
   const hasGalleryImages = imageCount !== undefined && imageCount > 0;
   const datasetKey = (acceptedOnly ? 1 : 3) + Number(recordsOnly);
 
@@ -362,24 +361,6 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       }
     }
 
-    function loadCount(
-      action: string,
-      cache: Map<number, CachedTaxonCount>,
-      setCount: (result: TaxonCountResult) => void,
-    ) {
-      const cached = cache.get(tid);
-      if (cached && cached.expiresAt > Date.now()) {
-        queueMicrotask(() => {
-          if (!controller.signal.aborted) setCount({ tid, count: cached.count });
-        });
-        return;
-      }
-      loadRecordData<{ count: number }>(action, ({ count }) => {
-        cache.set(tid, { count, expiresAt: Date.now() + taxonCountTtlMs });
-        setCount({ tid, count });
-      });
-    }
-
     loadRecordData<RecordPhotoResponse | null>('taxon-photo', (entry) => {
       const photos = entry ? [entry, ...(entry.alternates ?? [])] : [];
       const seen = new Set<string>();
@@ -393,8 +374,17 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
       });
       setPhotoResult({ tid, candidates });
     });
-    loadCount('taxon-records', recordCountCache.current, setRecordResult);
-    loadCount('taxon-images', imageCountCache.current, setImageResult);
+    const cached = taxonCountCache.current.get(tid);
+    if (cached && cached.expiresAt > Date.now()) {
+      queueMicrotask(() => {
+        if (!controller.signal.aborted) setCountResult({ tid, counts: cached.counts });
+      });
+    } else {
+      loadRecordData<TaxonCounts>('taxon-records', (counts) => {
+        taxonCountCache.current.set(tid, { counts, expiresAt: Date.now() + taxonCountTtlMs });
+        setCountResult({ tid, counts });
+      });
+    }
     return () => controller.abort();
   }, [apiUrl, activeTid]);
 
