@@ -685,7 +685,7 @@ export default function TaxonomyExplorer({ apiUrl }: TaxonomyExplorerProps) {
                     size="medium"
                     fullWidth
                     endIcon={<ImageOutlined />}
-                    sx={{ mt: 1 }}
+                    sx={{ mt: 2 }}
                   >
                     Browse images
                   </Button>
